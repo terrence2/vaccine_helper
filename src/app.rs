@@ -1,3 +1,5 @@
+use crate::schedule::Vaccine;
+
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
@@ -66,6 +68,10 @@ impl eframe::App for TemplateApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            for vaccine in Vaccine::get_vaccines() {
+                ui.label(vaccine.name());
+            }
+            /*
             // The central panel the region left after adding TopPanel's and SidePanel's
             ui.heading("eframe template");
 
@@ -90,6 +96,7 @@ impl eframe::App for TemplateApp {
                 powered_by_egui_and_eframe(ui);
                 egui::warn_if_debug_build(ui);
             });
+            */
         });
     }
 }
