@@ -110,6 +110,7 @@ pub struct Vaccine {
     initial_schedule: DoseSchedule,
     booster_schedule: BoosterSchedule,
     notes: &'static str,
+    recommended: bool,
 }
 
 impl Ord for Vaccine {
@@ -151,6 +152,10 @@ impl Vaccine {
         self.notes
     }
 
+    pub fn recommended(&self) -> bool {
+        self.recommended
+    }
+
     pub fn treats_str(&self) -> String {
         self.treats.join(", ")
     }
@@ -173,14 +178,16 @@ impl Vaccine {
                 treats: vec!["COVID-19"],
                 initial_schedule: DoseSchedule::RepeatedRange { number: 2, minimum: 1, maximum: 2 },
                 booster_schedule: BoosterSchedule::Annual,
-                notes: "Get a booster in Sept/Oct to catch any new variants."
+                notes: "Get a booster in Sept/Oct to catch any new variants.",
+                recommended: true,
             }),
             ("Flu", Vaccine {
                 name: "Flu",
                 treats: vec!["Flu"],
                 initial_schedule: DoseSchedule::Single,
                 booster_schedule: BoosterSchedule::Annual,
-                notes: "Get a booster in Sept/Oct to catch any new variants. Get a second dose in the middle of the season if you have no prior exposure."
+                notes: "Get a booster in Sept/Oct to catch any new variants. Get a second dose in the middle of the season if you have no prior exposure.",
+                recommended: true,
             }),
             ("Tdap", Vaccine {
                 name: "Tdap",
@@ -188,6 +195,7 @@ impl Vaccine {
                 initial_schedule: DoseSchedule::Repeated { number: 3, interval: 6 },
                 booster_schedule: BoosterSchedule::Years(10),
                 notes: "Tuberculosis is humanity's greatest adversary; please do your part by getting vaccinated and staying up to date with boosters!",
+                recommended: true,
             }),
             ("Mpox", Vaccine {
                 name: "Mpox",
@@ -195,6 +203,7 @@ impl Vaccine {
                 initial_schedule: DoseSchedule::RepeatedRange { number: 2, minimum: 1, maximum: 6 },
                 booster_schedule: BoosterSchedule::Years(5),
                 notes: "The 'M' is for both \"Monkey\" and Small",
+                recommended: true,
             }),
             ("Meningitis", Vaccine {
                 name: "Meningitis",
@@ -202,6 +211,7 @@ impl Vaccine {
                 initial_schedule: DoseSchedule::Repeated { number: 2, interval: 6 },
                 booster_schedule: BoosterSchedule::Years(5),
                 notes: "Only recommended for adults that are exposed regularly, but low risk to get it so why not?",
+                recommended: true,
             }),
             ("MMR", Vaccine {
                 name: "MMR",
@@ -209,6 +219,7 @@ impl Vaccine {
                 initial_schedule: DoseSchedule::Repeated { number: 2, interval: 5 * 12 },
                 booster_schedule: BoosterSchedule::Years(5),
                 notes: "Recommended for children and immuno-compromised, but again low risk so why not? Note: measles and rubella are lifetime immunity, but mumps requires a 5 year booster.",
+                recommended: true,
             }),
             ("Shinglex", Vaccine {
                 name: "Shinglex",
@@ -216,6 +227,7 @@ impl Vaccine {
                 initial_schedule: DoseSchedule::RepeatedRange { number: 2, minimum: 2, maximum: 6 },
                 booster_schedule: BoosterSchedule::Years(7),
                 notes: "Recommended for children and immuno-compromised, but again low risk so why not?",
+                recommended: true,
             }),
             ("PCV20", Vaccine {
                 name: "PCV20",
@@ -223,13 +235,15 @@ impl Vaccine {
                 initial_schedule: DoseSchedule::Repeated { number: 2, interval: 6 },
                 booster_schedule: BoosterSchedule::Lifetime,
                 notes: "Recommended for at risk and 50+, but no risk to get it sooner, so why not?",
+                recommended: true,
             }),
             ("Gardacil-9", Vaccine {
                 name: "Gardacil-9",
                 treats: vec!["Human Papillomavirus (HPV)"],
                 initial_schedule: DoseSchedule::Repeated { number: 3, interval: 6 },
                 booster_schedule: BoosterSchedule::Lifetime,
-                notes: "",
+                notes: "HPV causes cancer in men and women both. Don't ignore it just because you haven't been specifically advertised to.",
+                recommended: true,
             }),
             ("Hepatitis B", Vaccine {
                 name: "Hepatitis B",
@@ -237,6 +251,7 @@ impl Vaccine {
                 initial_schedule: DoseSchedule::Single,
                 booster_schedule: BoosterSchedule::Lifetime,
                 notes: "Greater than 30 years proven durability. Definitely worth it.",
+                recommended: true,
             }),
             ("Hepatitis A", Vaccine {
                 name: "Hepatitis A",
@@ -244,6 +259,7 @@ impl Vaccine {
                 initial_schedule: DoseSchedule::Repeated { number: 2, interval: 6 },
                 booster_schedule: BoosterSchedule::Lifetime,
                 notes: "Greater than 25 years proven durability. Definitely worth it.",
+                recommended: true,
             }),
             ("Hepatitis A&B", Vaccine {
                 name: "Hepatitis A&B",
@@ -251,6 +267,7 @@ impl Vaccine {
                 initial_schedule: DoseSchedule::Repeated { number: 3, interval: 6 },
                 booster_schedule: BoosterSchedule::Lifetime,
                 notes: "Not recommended for adults despite hepA/hepB being individually recommended. 🤷",
+                recommended: false,
             }),
             ("IPV", Vaccine {
                 name: "IPV",
@@ -258,6 +275,7 @@ impl Vaccine {
                 initial_schedule: DoseSchedule::Repeated { number: 4, interval: 4 },
                 booster_schedule: BoosterSchedule::Lifetime,
                 notes: "No recommendation for adults, but get a booster if you're at risk or risk averse.",
+                recommended: true,
             }),
             ("Chickenpox", Vaccine {
                 name: "Chickenpox",
@@ -265,6 +283,7 @@ impl Vaccine {
                 initial_schedule: DoseSchedule::RepeatedRange { number: 2, minimum: 1, maximum: 6 },
                 booster_schedule: BoosterSchedule::Lifetime,
                 notes: "Recommended if at risk or haven't had chickenpox yet, but low risk so why not?",
+                recommended: true,
             })]))
     }
 
@@ -280,7 +299,7 @@ impl Vaccine {
         prio: impl Iterator<Item = String>,
         nshots: u8,
         end_plan_year: i16,
-        _records: Vec<VaccineRecord>,
+        records: &[VaccineRecord],
     ) -> Result<Vec<VaccineAppointment>> {
         // Compute mo offset from current to end schedule at.
         let current_year = now.year();
@@ -301,7 +320,12 @@ impl Vaccine {
         let mut appointments = Vec::new();
         for vaccine_name in prio {
             let vaccine = vaccines.get(vaccine_name.as_str()).unwrap();
-            for mut dose_mo in vaccine.all_doses(limit_mo) {
+            for (index, mut dose_mo) in vaccine.all_doses(limit_mo).into_iter().enumerate() {
+                // Skip any innoculations we've already received
+                if VaccineRecord::have_matching(records, &vaccine_name, index.try_into()?) {
+                    continue;
+                }
+
                 if doses_in_mo0 >= max_doses_in_mo0 {
                     dose_mo += 1;
                 } else if dose_mo == 0 {
@@ -319,15 +343,25 @@ impl Vaccine {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum RecordKind {
-    Dose,
+    Dose(u8),
     Booster,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct VaccineRecord {
     vaccine: String,
     kind: RecordKind,
     notes: String,
+}
+
+impl VaccineRecord {
+    pub fn have_matching(records: &[VaccineRecord], vaccine_name: &str, index: u8) -> bool {
+        records
+            .iter()
+            .any(|record| record.vaccine == vaccine_name && record.kind == RecordKind::Dose(index))
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]

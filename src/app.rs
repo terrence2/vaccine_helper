@@ -26,11 +26,11 @@ impl Default for Profile {
     fn default() -> Self {
         Self {
             vaccines: Vaccine::get_vaccines()
-                .keys()
+                .values()
                 .sorted()
                 .map(|v| VaccineConfig {
-                    name: v.to_string(),
-                    enabled: true,
+                    name: v.name().to_owned(),
+                    enabled: v.recommended(),
                 })
                 .collect(),
             shots_per_visit: 3,
@@ -211,7 +211,7 @@ impl eframe::App for VaccineHelperApp {
                     .map(|v| v.name.clone()),
                 profile.shots_per_visit,
                 profile.end_plan_year,
-                vec![],
+                &[],
             )
             .unwrap();
 
