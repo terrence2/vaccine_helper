@@ -17,7 +17,8 @@ pub struct VaccineConfig {
 #[serde(default)]
 pub struct Profile {
     vaccines: Vec<VaccineConfig>,
-    shots_per_visit: u32,
+    shots_per_visit: u8,
+    end_plan_year: i16,
     schedule: Vec<VaccineAppointment>,
     schedule_base: Zoned,
 }
@@ -46,6 +47,7 @@ impl Default for TemplateApp {
                     })
                     .collect(),
                 shots_per_visit: 3,
+                end_plan_year: 2050,
                 schedule: vec![],
                 schedule_base: Zoned::now(),
             },
@@ -124,7 +126,7 @@ impl eframe::App for TemplateApp {
             let profile = self.profiles.get_mut(&self.active_profile).unwrap();
             let response = dnd(ui, "dnd_vaccines").show(
                 profile.vaccines.iter_mut(),
-                |ui, vaccine_cfg, handle, state| {
+                |ui, vaccine_cfg, handle, _state| {
                     let vaccine = Vaccine::get_vaccines()
                         .get(vaccine_cfg.name.as_str())
                         .expect("valid vaccine name");
@@ -134,15 +136,22 @@ impl eframe::App for TemplateApp {
                                 "../assets/icons8-drag-handle-30.png"
                             )));
                             ui.checkbox(&mut vaccine_cfg.enabled, "");
-                            ui.add_enabled(
+                            let resp = ui.add_enabled(
                                 vaccine_cfg.enabled,
                                 egui::Label::new(format!(
-                                    "{} [{} & boost {}]",
+                                    "{} ({})",
                                     vaccine.name(),
-                                    vaccine.dosage_schedule(),
-                                    vaccine.booster_schedule()
+                                    vaccine.treats_str(),
                                 )),
                             );
+                            if resp.hovered() {
+                                resp.show_tooltip_text(format!(
+                                    "Dose: {}\nBoost: {}\nNotes: {}",
+                                    vaccine.dosage_schedule(),
+                                    vaccine.booster_schedule(),
+                                    vaccine.notes()
+                                ));
+                            }
                         });
                     });
                 },
@@ -175,8 +184,10 @@ impl eframe::App for TemplateApp {
                             .filter(|v| v.enabled)
                             .map(|v| v.name.clone()),
                         profile.shots_per_visit,
+                        profile.end_plan_year,
                         vec![],
-                    );
+                    )
+                        .unwrap();
                 }
                 ui.label(format!("Last computed at: {}", profile.schedule_base));
             });
@@ -205,6 +216,21 @@ impl eframe::App for TemplateApp {
                         }
                     }
                 }
+            }
+
+            // Help->About
+            if self.show_about {
+                egui::Window::new("About")
+                    .show(ctx, |ui| {
+                        ui.label("Usage of this (extremely simple) tool does not constitute medical advice. Please consult a doctor or pharmacist before taking any vaccines.");
+                        ui.label("However, there is overwhelming evidence that vaccines are both safe and effective. Vaccines are so effective that we can't study the long-term effectiveness because there's nobody sick left to study.");
+                        ui.label("The source for this tool is available on GitHub:");
+                        ui.hyperlink_to("https://github.com/terrence2/vaccine_helper", "https://github.com/jimmycuadra/vaccine_helper");
+                        ui.separator();
+                        if ui.button("Close").clicked() {
+                            self.show_about = false;
+                        }
+                    });
             }
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {

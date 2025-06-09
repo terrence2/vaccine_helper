@@ -1,4 +1,5 @@
-use jiff::Zoned;
+use anyhow::Result;
+use jiff::{SpanRound, Unit, Zoned};
 use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, collections::HashMap, fmt, sync::OnceLock};
 
@@ -57,18 +58,18 @@ pub enum BoosterSchedule {
 
 impl BoosterSchedule {
     // Return the month offsets for all shots
-    fn all_months(&self, limit_mo: u32) -> Vec<u32> {
+    fn all_months(&self, last_dose_mo: u32, limit_mo: u32) -> Vec<u32> {
         let mut out = Vec::new();
-        for mo in 0..limit_mo {
+        for mo in 1..limit_mo {
             match self {
                 Self::Annual if mo % 12 == 0 => {
-                    out.push(mo);
+                    out.push(last_dose_mo + mo);
                 }
                 Self::Years(n) if mo % (12 * n) == 0 => {
-                    out.push(mo);
+                    out.push(last_dose_mo + mo);
                 }
                 Self::Lifetime if mo % (12 * 25) == 0 => {
-                    out.push(mo);
+                    out.push(last_dose_mo + mo);
                 }
                 Self::Todo => return vec![],
                 _ => {}
@@ -164,8 +165,8 @@ impl Vaccine {
         self.notes
     }
 
-    pub fn treats(&self) -> &[&str] {
-        &self.treats
+    pub fn treats_str(&self) -> String {
+        self.treats.join(", ")
     }
 
     pub fn get_vaccines() -> &'static HashMap<&'static str, Vaccine> {
@@ -200,14 +201,14 @@ impl Vaccine {
                 treats: vec!["Monkeypox", "Smallpox"],
                 initial_schedule: DoseSchedule::RepeatedRange { number: 2, minimum: 1, maximum: 6 },
                 booster_schedule: BoosterSchedule::Years(5),
-                notes: "M is for \"Monkey\" (and Small)",
+                notes: "The 'M' is for both \"Monkey\" and Small",
             }),
             ("Meningitis", Vaccine {
                 name: "Meningitis",
                 treats: vec!["Meningitis"],
                 initial_schedule: DoseSchedule::Repeated { number: 2, interval: 6 },
                 booster_schedule: BoosterSchedule::Years(5),
-                notes: "Only recommened for adults that are exposed regularly, but low risk to get it so why not?",
+                notes: "Only recommended for adults that are exposed regularly, but low risk to get it so why not?",
             }),
             // MMR [2x doses 5 years apart, may need to re-dose for mumps every 5 years, if that's ever a thing again],
             ("MMR", Vaccine {
@@ -289,13 +290,13 @@ impl Vaccine {
     pub fn schedule(
         now: &Zoned,
         prio: impl Iterator<Item = String>,
-        nshots: u32,
-        records: Vec<VaccineRecord>,
-    ) -> Vec<VaccineAppointment> {
+        nshots: u8,
+        end_plan_year: i16,
+        _records: Vec<VaccineRecord>,
+    ) -> Result<Vec<VaccineAppointment>> {
         fn add_shot_to_best_slot(
             mut mo: u32,
-            now: &Zoned,
-            nshots: u32,
+            nshots: u8,
             vaccine: &Vaccine,
             slots: &mut HashMap<u32, Vec<String>>,
         ) -> u32 {
@@ -310,6 +311,15 @@ impl Vaccine {
             }
         }
 
+        let day_of_mo = now
+            .first_of_month()?
+            .until(now)?
+            .round(SpanRound::new().smallest(Unit::Day).relative(now))?
+            .get_days();
+        let days_left_in_month = now.days_in_month() as i32 - day_of_mo;
+        let max_doses_in_mo0 = days_left_in_month * nshots as i32;
+        assert!((0..400).contains(&max_doses_in_mo0));
+
         let vaccines = Vaccine::get_vaccines();
         // Note: track everything in months offset from now and only convert to
         //       real times with now base when we commit to an appointment.
@@ -319,17 +329,19 @@ impl Vaccine {
             let vaccine = vaccines.get(vaccine_name.as_str()).unwrap();
             let mut last_dose_mo = 0;
             for dose_mo in vaccine.dosage_schedule().all_months() {
-                last_dose_mo = add_shot_to_best_slot(dose_mo, now, nshots, vaccine, &mut slots);
+                last_dose_mo = add_shot_to_best_slot(dose_mo, nshots, vaccine, &mut slots);
                 appointments.push(VaccineAppointment::from_month_offset(
                     vaccine.name(),
                     now,
                     last_dose_mo,
                 ));
             }
-            for mut booster_mo in vaccine.booster_schedule().all_months(50 * 12) {
+            for booster_mo in vaccine
+                .booster_schedule()
+                .all_months(dbg!(last_dose_mo), end_plan_year as u32 * 12)
+            {
                 // Start boosters after the last dose.
-                booster_mo += last_dose_mo;
-                let tmp_mo = add_shot_to_best_slot(booster_mo, now, nshots, vaccine, &mut slots);
+                let tmp_mo = add_shot_to_best_slot(booster_mo, nshots, vaccine, &mut slots);
                 appointments.push(VaccineAppointment::from_month_offset(
                     vaccine.name(),
                     now,
@@ -338,7 +350,7 @@ impl Vaccine {
             }
         }
         appointments.sort();
-        dbg!(appointments)
+        Ok(appointments)
     }
 }
 
@@ -390,7 +402,7 @@ impl VaccineAppointment {
         let month_offset = month as u32 + mo - 1;
         let year_offset: i16 = (month_offset / 12).try_into().unwrap();
         let month: i8 = ((month_offset % 12) + 1).try_into().unwrap();
-        assert!(month >= 1 && month <= 12);
+        assert!((1..=12).contains(&month));
         (year.saturating_add(year_offset), month)
     }
 }
@@ -430,6 +442,35 @@ mod tests {
         assert_eq!((2025, 11), VaccineAppointment::mo_to_ym(&test_time()?, 5));
         assert_eq!((2025, 12), VaccineAppointment::mo_to_ym(&test_time()?, 6));
         assert_eq!((2026, 1), VaccineAppointment::mo_to_ym(&test_time()?, 7));
+        Ok(())
+    }
+
+    #[test]
+    fn test_mo_for_vaccine() -> Result<()> {
+        assert_eq!(
+            vec![0, 6, 12],
+            Vaccine::get_vaccines()
+                .get("Tdap")
+                .unwrap()
+                .dosage_schedule()
+                .all_months()
+        );
+        assert_eq!(
+            vec![0, 1],
+            Vaccine::get_vaccines()
+                .get("Mpox")
+                .unwrap()
+                .dosage_schedule()
+                .all_months()
+        );
+        assert_eq!(
+            vec![60],
+            Vaccine::get_vaccines()
+                .get("Mpox")
+                .unwrap()
+                .booster_schedule()
+                .all_months(0, 5 * 12 + 1)
+        );
         Ok(())
     }
 }
