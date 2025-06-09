@@ -30,6 +30,7 @@ pub struct TemplateApp {
     profiles: HashMap<String, Profile>,
     show_profiles: bool,
     show_about: bool,
+    add_profile_name: String,
 }
 
 impl Default for TemplateApp {
@@ -47,7 +48,7 @@ impl Default for TemplateApp {
                     })
                     .collect(),
                 shots_per_visit: 3,
-                end_plan_year: 2050,
+                end_plan_year: Zoned::now().year() + 55,
                 schedule: vec![],
                 schedule_base: Zoned::now(),
             },
@@ -57,6 +58,7 @@ impl Default for TemplateApp {
             profiles,
             show_profiles: false,
             show_about: false,
+            add_profile_name: "".to_owned(),
         }
     }
 }
@@ -170,6 +172,20 @@ impl eframe::App for TemplateApp {
                     }
                 }
             });
+            ui.horizontal(|ui| {
+                let year = Zoned::now().year();
+                let r0 = ui.label("End plan year:");
+                let r1 = ui.add(egui::Slider::new(
+                    &mut profile.end_plan_year,
+                    year..=year + 100,
+                ));
+                for resp in [r0, r1].iter() {
+                    if resp.hovered() {
+                        resp.show_tooltip_text("When to stop scheduling vaccines.")
+                    }
+                }
+            });
+
             ui.separator();
 
             // Compute the schedule
@@ -187,7 +203,7 @@ impl eframe::App for TemplateApp {
                         profile.end_plan_year,
                         vec![],
                     )
-                        .unwrap();
+                    .unwrap();
                 }
                 ui.label(format!("Last computed at: {}", profile.schedule_base));
             });
@@ -218,19 +234,12 @@ impl eframe::App for TemplateApp {
                 }
             }
 
-            // Help->About
+            // Show sub-windows
+            if self.show_profiles {
+                self.show_profile_list(ctx);
+            }
             if self.show_about {
-                egui::Window::new("About")
-                    .show(ctx, |ui| {
-                        ui.label("Usage of this (extremely simple) tool does not constitute medical advice. Please consult a doctor or pharmacist before taking any vaccines.");
-                        ui.label("However, there is overwhelming evidence that vaccines are both safe and effective. Vaccines are so effective that we can't study the long-term effectiveness because there's nobody sick left to study.");
-                        ui.label("The source for this tool is available on GitHub:");
-                        ui.hyperlink_to("https://github.com/terrence2/vaccine_helper", "https://github.com/jimmycuadra/vaccine_helper");
-                        ui.separator();
-                        if ui.button("Close").clicked() {
-                            self.show_about = false;
-                        }
-                    });
+                self.show_about(ctx);
             }
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
@@ -238,6 +247,56 @@ impl eframe::App for TemplateApp {
                 egui::warn_if_debug_build(ui);
             });
         });
+    }
+}
+
+impl TemplateApp {
+    fn show_profile_list(&mut self, ctx: &egui::Context) {
+        egui::Window::new("Profiles").show(ctx, |ui| {
+            let profile_names = self.profiles.keys().cloned().collect_vec();
+            for name in profile_names {
+                let is_active_row = name == self.active_profile;
+                ui.add_enabled_ui(!is_active_row, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.button("Activate").clicked() {
+                            self.active_profile = name.clone();
+                        }
+                        if ui.button("Delete").clicked() {
+                            self.profiles.remove(&name);
+                        }
+                        ui.label(name);
+                    });
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Add a profile:");
+                    ui.text_edit_singleline(&mut self.add_profile_name);
+                    if ui.button("Add").clicked() {
+                        self.profiles
+                            .insert(self.add_profile_name.clone(), Profile::default());
+                        self.active_profile = self.add_profile_name.clone();
+                        self.add_profile_name = "".to_owned();
+                    }
+                });
+            }
+            ui.separator();
+            if ui.button("Close").clicked() {
+                self.show_profiles = false;
+            }
+        });
+    }
+
+    fn show_about(&mut self, ctx: &egui::Context) {
+        egui::Window::new("About")
+            .show(ctx, |ui| {
+                ui.label("Usage of this (extremely simple) tool does not constitute medical advice. Please consult a doctor or pharmacist before taking any vaccines.");
+                ui.label("However, there is overwhelming evidence that vaccines are both safe and effective. Vaccines are so effective that we can't study the long-term effectiveness because there's nobody sick left to study.");
+                ui.label("The source for this tool is available on GitHub:");
+                ui.hyperlink_to("https://github.com/terrence2/vaccine_helper", "https://github.com/jimmycuadra/vaccine_helper");
+                ui.separator();
+                if ui.button("Close").clicked() {
+                    self.show_about = false;
+                }
+            });
     }
 }
 

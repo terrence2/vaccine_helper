@@ -132,14 +132,14 @@ impl PartialOrd for Vaccine {
 }
 
 /*
+TODO: need to figure out the initial schedule for these.
 COVID-19,
 Flu,
 
-5-10 years efficacy
+TODO: need to figure out the booster schedule for these.
 Tdap,
 
-7-10 Years
-TODO:
+TODO: need to research all of these and figure out how to default them off.
 Typhoid
 Rabies
 Cholera
@@ -169,10 +169,18 @@ impl Vaccine {
         self.treats.join(", ")
     }
 
+    pub fn all_doses(&self, end_plan_mo: u32) -> Vec<u32> {
+        let mut initial = self.initial_schedule.all_months();
+        let booster = self
+            .booster_schedule
+            .all_months(*initial.last().unwrap(), end_plan_mo);
+        initial.extend(booster);
+        initial
+    }
+
     pub fn get_vaccines() -> &'static HashMap<&'static str, Vaccine> {
         static VACCINES: OnceLock<HashMap<&'static str, Vaccine>> = OnceLock::new();
         VACCINES.get_or_init(|| HashMap::from_iter([
-            // Annual
             ("COVID-19", Vaccine {
                 name: "COVID-19",
                 treats: vec!["COVID-19"],
@@ -187,7 +195,6 @@ impl Vaccine {
                 booster_schedule: BoosterSchedule::Annual,
                 notes: "Get a booster in Sept/Oct to catch any new variants."
             }),
-            // 5-10 years
             ("Tdap", Vaccine {
                 name: "Tdap",
                 treats: vec!["Tuberculosis", "Tetanus", "Diphtheria", "Pertussis"],
@@ -195,7 +202,6 @@ impl Vaccine {
                 booster_schedule: BoosterSchedule::Todo,
                 notes: "",
             }),
-            // Mpox (M is for Monkey and Small) [2x doses 1mo apart; 5 year boosters after],
             ("Mpox", Vaccine {
                 name: "Mpox",
                 treats: vec!["Monkeypox", "Smallpox"],
@@ -210,7 +216,6 @@ impl Vaccine {
                 booster_schedule: BoosterSchedule::Years(5),
                 notes: "Only recommended for adults that are exposed regularly, but low risk to get it so why not?",
             }),
-            // MMR [2x doses 5 years apart, may need to re-dose for mumps every 5 years, if that's ever a thing again],
             ("MMR", Vaccine {
                 name: "MMR",
                 treats: vec!["Measles", "Mumps", "Rubella"],
@@ -218,8 +223,6 @@ impl Vaccine {
                 booster_schedule: BoosterSchedule::Years(5),
                 notes: "Recommended for children and immuno-compromised, but again low risk so why not? Note: measles and rubella are lifetime immunity, but mumps requires a 5 year booster.",
             }),
-            // 7-10 years
-// Shingles (Shinglex) [2x doses 2-6mo apart with 10 year boosters or closer if at risk; recommended for children and immuno-compromised, but again low risk so why not],
             ("Shinglex", Vaccine {
                 name: "Shinglex",
                 treats: vec!["Shingles"],
@@ -227,8 +230,6 @@ impl Vaccine {
                 booster_schedule: BoosterSchedule::Years(7),
                 notes: "Recommended for children and immuno-compromised, but again low risk so why not?",
             }),
-            // Lifetime, probably? So far, herd immunity has made it impossible to research long-term efficacy. So there's another silver lining for 2025, I guess?
-// Pneumonia [2x doses 6mo apart; recommended for at risk and 50+, but no risk to get it sooner, so why not] (PCV20),
             ("PCV20", Vaccine {
                 name: "PCV20",
                 treats: vec!["Pneumonia"],
@@ -236,7 +237,6 @@ impl Vaccine {
                 booster_schedule: BoosterSchedule::Lifetime,
                 notes: "Recommended for at risk and 50+, but no risk to get it sooner, so why not?",
             }),
-            // HPV [3x doses every 6mo for 1.5 years; lower efficacy if over 25, but why not] (Gardacil-9),
             ("Gardacil-9", Vaccine {
                 name: "Gardacil-9",
                 treats: vec!["Human Papillomavirus (HPV)"],
@@ -244,7 +244,6 @@ impl Vaccine {
                 booster_schedule: BoosterSchedule::Lifetime,
                 notes: "",
             }),
-// Hepatitis B [single dose; >30 years proven durability],
             ("Hepatitis B", Vaccine {
                 name: "Hepatitis B",
                 treats: vec!["Hepatitis B"],
@@ -252,7 +251,6 @@ impl Vaccine {
                 booster_schedule: BoosterSchedule::Lifetime,
                 notes: "Greater than 30 years proven durability. Definitely worth it.",
             }),
-// Hepatitis A [2 doses 6mo apart; >25 years proven durability],
             ("Hepatitis A", Vaccine {
                 name: "Hepatitis A",
                 treats: vec!["Hepatitis A"],
@@ -260,7 +258,6 @@ impl Vaccine {
                 booster_schedule: BoosterSchedule::Lifetime,
                 notes: "Greater than 25 years proven durability. Definitely worth it.",
             }),
-// Hepatitis A&B [3 doses; not recommended for adults despite hepA/hepB individually recommended 🤷],
             ("Hepatitis A&B", Vaccine {
                 name: "Hepatitis A&B",
                 treats: vec!["Hepatitis A", "Hepatitis B"],
@@ -268,7 +265,6 @@ impl Vaccine {
                 booster_schedule: BoosterSchedule::Lifetime,
                 notes: "Not recommended for adults despite hepA/hepB being individually recommended. 🤷",
             }),
-            // Polio (IPV) [4 doses for children; no recommendation for adults, but get a booster if you're at risk or risk averse],
             ("IPV", Vaccine {
                 name: "IPV",
                 treats: vec!["Polio"],
@@ -276,7 +272,6 @@ impl Vaccine {
                 booster_schedule: BoosterSchedule::Lifetime,
                 notes: "No recommendation for adults, but get a booster if you're at risk or risk averse.",
             }),
-            // Chickenpox [2x doses 1-6mo apart; recommended if at risk or haven't had chickenpox yet]
             ("Chickenpox", Vaccine {
                 name: "Chickenpox",
                 treats: vec!["Chickenpox"],
@@ -286,6 +281,12 @@ impl Vaccine {
             })]))
     }
 
+    // Schedule all vaccines listed in `prio` until `end_plan_year`.
+    // Limit weekly shots to nshots.
+    //
+    // Note: track everything internally in months offset from now and only convert to
+    //       real times with now base when we commit to an appointment.
+    //
     // TODO: allow for some shots to have happened already. Need a record struct.
     pub fn schedule(
         now: &Zoned,
@@ -294,59 +295,36 @@ impl Vaccine {
         end_plan_year: i16,
         _records: Vec<VaccineRecord>,
     ) -> Result<Vec<VaccineAppointment>> {
-        fn add_shot_to_best_slot(
-            mut mo: u32,
-            nshots: u8,
-            vaccine: &Vaccine,
-            slots: &mut HashMap<u32, Vec<String>>,
-        ) -> u32 {
-            loop {
-                let slot = slots.entry(mo).or_default();
-                if slot.len() < nshots as usize {
-                    slot.push(vaccine.name().to_owned());
-                    return mo;
-                } else {
-                    mo = mo.checked_add(1).unwrap();
-                }
-            }
-        }
+        // Compute mo offset from current to end schedule at.
+        let current_year = now.year();
+        let limit_mo = (end_plan_year - current_year) as u32 * 12;
 
+        // In general, a person can get a whole lot of vaccines in a month, even
         let day_of_mo = now
             .first_of_month()?
             .until(now)?
             .round(SpanRound::new().smallest(Unit::Day).relative(now))?
             .get_days();
         let days_left_in_month = now.days_in_month() as i32 - day_of_mo;
-        let max_doses_in_mo0 = days_left_in_month * nshots as i32;
+        let max_doses_in_mo0 = ((days_left_in_month * nshots as i32) as f32 / 7.).ceil() as u32;
         assert!((0..400).contains(&max_doses_in_mo0));
+        let mut doses_in_mo0 = 0;
 
         let vaccines = Vaccine::get_vaccines();
-        // Note: track everything in months offset from now and only convert to
-        //       real times with now base when we commit to an appointment.
-        let mut slots = HashMap::<u32, Vec<String>>::new();
         let mut appointments = Vec::new();
         for vaccine_name in prio {
             let vaccine = vaccines.get(vaccine_name.as_str()).unwrap();
-            let mut last_dose_mo = 0;
-            for dose_mo in vaccine.dosage_schedule().all_months() {
-                last_dose_mo = add_shot_to_best_slot(dose_mo, nshots, vaccine, &mut slots);
+            for mut dose_mo in vaccine.all_doses(limit_mo) {
+                if doses_in_mo0 >= max_doses_in_mo0 {
+                    dose_mo += 1;
+                } else if dose_mo == 0 {
+                    doses_in_mo0 += 1;
+                }
                 appointments.push(VaccineAppointment::from_month_offset(
                     vaccine.name(),
                     now,
-                    last_dose_mo,
-                ));
-            }
-            for booster_mo in vaccine
-                .booster_schedule()
-                .all_months(dbg!(last_dose_mo), end_plan_year as u32 * 12)
-            {
-                // Start boosters after the last dose.
-                let tmp_mo = add_shot_to_best_slot(booster_mo, nshots, vaccine, &mut slots);
-                appointments.push(VaccineAppointment::from_month_offset(
-                    vaccine.name(),
-                    now,
-                    tmp_mo,
-                ));
+                    dose_mo,
+                ))
             }
         }
         appointments.sort();
