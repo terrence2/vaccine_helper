@@ -16,7 +16,6 @@ pub enum DoseSchedule {
         minimum: u32,
         maximum: u32,
     },
-    Todo,
 }
 
 impl DoseSchedule {
@@ -28,7 +27,6 @@ impl DoseSchedule {
             Self::RepeatedRange {
                 number, minimum, ..
             } => (0..*number).map(|i| i * minimum).collect(),
-            Self::Todo => vec![],
         }
     }
 }
@@ -43,7 +41,6 @@ impl fmt::Display for DoseSchedule {
                 minimum,
                 maximum,
             } => write!(f, "{number}x every {minimum}-{maximum}mo"),
-            Self::Todo => write!(f, "check the CDC website for instructions"),
         }
     }
 }
@@ -53,7 +50,6 @@ pub enum BoosterSchedule {
     Annual,
     Years(u32),
     Lifetime,
-    Todo,
 }
 
 impl BoosterSchedule {
@@ -71,7 +67,6 @@ impl BoosterSchedule {
                 Self::Lifetime if mo % (12 * 25) == 0 => {
                     out.push(last_dose_mo + mo);
                 }
-                Self::Todo => return vec![],
                 _ => {}
             }
         }
@@ -83,7 +78,6 @@ impl BoosterSchedule {
             Self::Annual => 12,
             Self::Years(n) => 12 * n,
             Self::Lifetime => 25,
-            Self::Todo => 20,
         }
     }
 }
@@ -105,7 +99,6 @@ impl fmt::Display for BoosterSchedule {
             Self::Annual => write!(f, "every year"),
             Self::Years(n) => write!(f, "every {n} years"),
             Self::Lifetime => write!(f, "every 25-30 years or when exposed"),
-            Self::Todo => write!(f, "check the CDC website for instructions"),
         }
     }
 }
@@ -132,13 +125,6 @@ impl PartialOrd for Vaccine {
 }
 
 /*
-TODO: need to figure out the initial schedule for these.
-COVID-19,
-Flu,
-
-TODO: need to figure out the booster schedule for these.
-Tdap,
-
 TODO: need to research all of these and figure out how to default them off.
 Typhoid
 Rabies
@@ -171,9 +157,10 @@ impl Vaccine {
 
     pub fn all_doses(&self, end_plan_mo: u32) -> Vec<u32> {
         let mut initial = self.initial_schedule.all_months();
+        assert!(!initial.is_empty(), "a vaccine has no schedule");
         let booster = self
             .booster_schedule
-            .all_months(*initial.last().unwrap(), end_plan_mo);
+            .all_months(*initial.last().unwrap_or(&0), end_plan_mo);
         initial.extend(booster);
         initial
     }
@@ -184,23 +171,23 @@ impl Vaccine {
             ("COVID-19", Vaccine {
                 name: "COVID-19",
                 treats: vec!["COVID-19"],
-                initial_schedule: DoseSchedule::Todo,
+                initial_schedule: DoseSchedule::RepeatedRange { number: 2, minimum: 1, maximum: 2 },
                 booster_schedule: BoosterSchedule::Annual,
                 notes: "Get a booster in Sept/Oct to catch any new variants."
             }),
             ("Flu", Vaccine {
                 name: "Flu",
                 treats: vec!["Flu"],
-                initial_schedule: DoseSchedule::Todo,
+                initial_schedule: DoseSchedule::Single,
                 booster_schedule: BoosterSchedule::Annual,
-                notes: "Get a booster in Sept/Oct to catch any new variants."
+                notes: "Get a booster in Sept/Oct to catch any new variants. Get a second dose in the middle of the season if you have no prior exposure."
             }),
             ("Tdap", Vaccine {
                 name: "Tdap",
                 treats: vec!["Tuberculosis", "Tetanus", "Diphtheria", "Pertussis"],
                 initial_schedule: DoseSchedule::Repeated { number: 3, interval: 6 },
-                booster_schedule: BoosterSchedule::Todo,
-                notes: "",
+                booster_schedule: BoosterSchedule::Years(10),
+                notes: "Tuberculosis is humanity's greatest adversary; please do your part by getting vaccinated and staying up to date with boosters!",
             }),
             ("Mpox", Vaccine {
                 name: "Mpox",

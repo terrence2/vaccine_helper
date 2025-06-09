@@ -13,57 +13,68 @@ pub struct VaccineConfig {
 }
 
 // Configuration for the scheduling process.
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Profile {
     vaccines: Vec<VaccineConfig>,
     shots_per_visit: u8,
     end_plan_year: i16,
     schedule: Vec<VaccineAppointment>,
-    schedule_base: Zoned,
+}
+
+impl Default for Profile {
+    fn default() -> Self {
+        Self {
+            vaccines: Vaccine::get_vaccines()
+                .keys()
+                .sorted()
+                .map(|v| VaccineConfig {
+                    name: v.to_string(),
+                    enabled: true,
+                })
+                .collect(),
+            shots_per_visit: 3,
+            end_plan_year: Zoned::now().year() + 55,
+            schedule: vec![],
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
-pub struct TemplateApp {
+pub struct VaccineHelperApp {
     active_profile: String,
     profiles: HashMap<String, Profile>,
+
+    // Window state
     show_profiles: bool,
+    show_preferences: bool,
     show_about: bool,
+
+    // Add record widget
+    add_record_vaccine: Option<String>,
+
+    // Add profile widget
     add_profile_name: String,
 }
 
-impl Default for TemplateApp {
+impl Default for VaccineHelperApp {
     fn default() -> Self {
-        let mut profiles = HashMap::new();
-        profiles.insert(
-            "Default".to_owned(),
-            Profile {
-                vaccines: Vaccine::get_vaccines()
-                    .keys()
-                    .sorted()
-                    .map(|v| VaccineConfig {
-                        name: v.to_string(),
-                        enabled: true,
-                    })
-                    .collect(),
-                shots_per_visit: 3,
-                end_plan_year: Zoned::now().year() + 55,
-                schedule: vec![],
-                schedule_base: Zoned::now(),
-            },
-        );
+        // let mut profiles = ;
+        // profiles.insert("Default".to_owned(), Profile::default());
         Self {
             active_profile: "Default".to_owned(),
-            profiles,
+            profiles: HashMap::from_iter([("Default".to_owned(), Profile::default())]),
             show_profiles: false,
+            show_preferences: false,
             show_about: false,
+            add_record_vaccine: None,
             add_profile_name: "".to_owned(),
         }
     }
 }
 
-impl TemplateApp {
+impl VaccineHelperApp {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
@@ -81,7 +92,7 @@ impl TemplateApp {
     }
 }
 
-impl eframe::App for TemplateApp {
+impl eframe::App for VaccineHelperApp {
     /// Called by the frame work to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
@@ -103,6 +114,9 @@ impl eframe::App for TemplateApp {
                         if ui.button("Profiles...").clicked() {
                             self.show_profiles = true;
                         }
+                        if ui.button("Preferences...").clicked() {
+                            self.show_preferences = true;
+                        }
                         ui.separator();
                         if ui.button("Quit").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -115,8 +129,6 @@ impl eframe::App for TemplateApp {
                     });
                     ui.add_space(16.0);
                 }
-
-                egui::widgets::global_theme_preference_buttons(ui);
             });
         });
 
@@ -188,25 +200,20 @@ impl eframe::App for TemplateApp {
 
             ui.separator();
 
-            // Compute the schedule
-            ui.horizontal(|ui| {
-                if ui.button("Propose Schedule").clicked() {
-                    profile.schedule_base = Zoned::now();
-                    profile.schedule = Vaccine::schedule(
-                        &profile.schedule_base,
-                        profile
-                            .vaccines
-                            .iter()
-                            .filter(|v| v.enabled)
-                            .map(|v| v.name.clone()),
-                        profile.shots_per_visit,
-                        profile.end_plan_year,
-                        vec![],
-                    )
-                    .unwrap();
-                }
-                ui.label(format!("Last computed at: {}", profile.schedule_base));
-            });
+            // Re-compute the schedule
+            // TODO: only do this if something changed? Probably not worth bothering.
+            profile.schedule = Vaccine::schedule(
+                &Zoned::now(),
+                profile
+                    .vaccines
+                    .iter()
+                    .filter(|v| v.enabled)
+                    .map(|v| v.name.clone()),
+                profile.shots_per_visit,
+                profile.end_plan_year,
+                vec![],
+            )
+            .unwrap();
 
             // Show the current schedule
             let now = Zoned::now();
@@ -228,7 +235,7 @@ impl eframe::App for TemplateApp {
                     }
                     for appt in &profile.schedule {
                         if appt.year() == y && appt.month() == mo {
-                            ui.label(appt.vaccine());
+                            ui.label(format!("    {}", appt.vaccine()));
                         }
                     }
                 }
@@ -237,6 +244,9 @@ impl eframe::App for TemplateApp {
             // Show sub-windows
             if self.show_profiles {
                 self.show_profile_list(ctx);
+            }
+            if self.show_preferences {
+                self.show_preferences(ctx);
             }
             if self.show_about {
                 self.show_about(ctx);
@@ -250,7 +260,7 @@ impl eframe::App for TemplateApp {
     }
 }
 
-impl TemplateApp {
+impl VaccineHelperApp {
     fn show_profile_list(&mut self, ctx: &egui::Context) {
         egui::Window::new("Profiles").show(ctx, |ui| {
             let profile_names = self.profiles.keys().cloned().collect_vec();
@@ -267,17 +277,17 @@ impl TemplateApp {
                         ui.label(name);
                     });
                 });
-                ui.horizontal(|ui| {
-                    ui.label("Add a profile:");
-                    ui.text_edit_singleline(&mut self.add_profile_name);
-                    if ui.button("Add").clicked() {
-                        self.profiles
-                            .insert(self.add_profile_name.clone(), Profile::default());
-                        self.active_profile = self.add_profile_name.clone();
-                        self.add_profile_name = "".to_owned();
-                    }
-                });
             }
+            ui.horizontal(|ui| {
+                ui.label("Add a profile:");
+                ui.text_edit_singleline(&mut self.add_profile_name);
+                if ui.button("Add").clicked() {
+                    self.profiles
+                        .insert(self.add_profile_name.clone(), Profile::default());
+                    self.active_profile = self.add_profile_name.clone();
+                    self.add_profile_name = "".to_owned();
+                }
+            });
             ui.separator();
             if ui.button("Close").clicked() {
                 self.show_profiles = false;
@@ -285,11 +295,42 @@ impl TemplateApp {
         });
     }
 
+    fn show_preferences(&mut self, ctx: &egui::Context) {
+        egui::Window::new("Preferences").show(ctx, |ui| {
+            egui::Grid::new("preferences_grid")
+                .num_columns(2)
+                .show(ui, |ui| {
+                    ui.label("Night Mode:");
+                    egui::widgets::global_theme_preference_buttons(ui);
+                    ui.end_row();
+                });
+            ui.separator();
+            if ui.button("Close").clicked() {
+                self.show_preferences = false;
+            }
+        });
+    }
+
     fn show_about(&mut self, ctx: &egui::Context) {
         egui::Window::new("About")
             .show(ctx, |ui| {
-                ui.label("Usage of this (extremely simple) tool does not constitute medical advice. Please consult a doctor or pharmacist before taking any vaccines.");
+                ui.heading("Warning");
+                ui.separator();
+                ui.label("Usage of this (extremely simple) tool does not constitute medical advice. Please consult a doctor or pharmacist before putting anything in your body.");
+                ui.label("");
+
+                ui.heading("General Safety Information");
+                ui.separator();
                 ui.label("However, there is overwhelming evidence that vaccines are both safe and effective. Vaccines are so effective that we can't study the long-term effectiveness because there's nobody sick left to study.");
+                ui.label("");
+                ui.label("The odds of a severe or worse vaccine reaction are, like shark attacks and lightning strikes, low enough that computing accurate odds is impossible. Many vaccines are safe to the limits of our ability to detect, with no reported severe reactions on record.");
+                ui.hyperlink_to("WHO Reaction Rates Info Sheets", "https://www.who.int/teams/regulation-prequalification/regulation-and-safety/pharmacovigilance/guidance/reaction-rates-information-sheets");
+                ui.label("");
+
+                ui.heading("About this Tool");
+                ui.separator();
+                ui.label("Vaccine helper is there to give adults (with no a competent vaccine clinic in their area) a simple way to track and schedule immunizations with all the incredible new vaccines that are available since we were children.");
+                ui.label("");
                 ui.label("The source for this tool is available on GitHub:");
                 ui.hyperlink_to("https://github.com/terrence2/vaccine_helper", "https://github.com/jimmycuadra/vaccine_helper");
                 ui.separator();

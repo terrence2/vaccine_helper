@@ -2,4 +2,4 @@
 
 mod app;
 mod schedule;
-pub use app::TemplateApp;
+pub use app::VaccineHelperApp;

@@ -20,7 +20,7 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Vaccine Helper",
         native_options,
-        Box::new(|cc| Ok(Box::new(vaccine_helper::TemplateApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(vaccine_helper::VaccineHelperApp::new(cc)))),
     )
 }
 
@@ -50,7 +50,7 @@ fn main() {
             .start(
                 canvas,
                 web_options,
-                Box::new(|cc| Ok(Box::new(vaccine_helper::TemplateApp::new(cc)))),
+                Box::new(|cc| Ok(Box::new(vaccine_helper::VaccineHelperApp::new(cc)))),
             )
             .await;
 
