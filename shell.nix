@@ -12,6 +12,7 @@ let
       "rust-src" # for rust-analyzer
       "rust-analyzer"
     ];
+    targets = [ "wasm32-unknown-unknown"];
   };
 
   # If we need to do macro-backtrace or other nightly only analysis
