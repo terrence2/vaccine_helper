@@ -102,32 +102,36 @@ impl eframe::App for VaccineHelperApp {
             // The top panel is often a good place for a menu bar:
 
             egui::menu::bar(ui, |ui| {
-                // NOTE: no File->Quit on web pages!
-                let is_web = cfg!(target_arch = "wasm32");
-                if !is_web {
-                    ui.menu_button("File", |ui| {
-                        if ui.button("Profiles...").clicked() {
-                            self.show_profiles = true;
-                        }
-                        if ui.button("Preferences...").clicked() {
-                            self.show_preferences = true;
-                        }
+                ui.menu_button("File", |ui| {
+                    if ui.button("Profiles...").clicked() {
+                        self.show_profiles = true;
+                    }
+                    if ui.button("Preferences...").clicked() {
+                        self.show_preferences = true;
+                    }
+
+                    // NOTE: no File->Quit on web pages!
+                    let is_web = cfg!(target_arch = "wasm32");
+                    if !is_web {
                         ui.separator();
                         if ui.button("Quit").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
-                    });
-                    ui.menu_button("Help", |ui| {
-                        if ui.button("About...").clicked() {
-                            self.show_about = true;
-                        }
-                    });
-                    ui.add_space(16.0);
-                }
+                    }
+                });
+                ui.menu_button("Help", |ui| {
+                    if ui.button("About...").clicked() {
+                        self.show_about = true;
+                    }
+                });
             });
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("Vaccine Records");
+            ui.label("Put immunizations you've received here to remove them from the schedule.");
+            ui.label("");
+
             ui.heading("Schedule Configuration");
             ui.label("Select and prioritize the vaccines you want to get");
 
