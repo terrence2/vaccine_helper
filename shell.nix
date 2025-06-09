@@ -16,6 +16,31 @@ let
 
   # If we need to do macro-backtrace or other nightly only analysis
   #rust = pkgs.rust-bin.nightly.latest.default;
+
+  # Libs to build and run with
+  myBuildInputs = (with pkgs; [
+    alsa-lib.dev
+    atk
+    fontconfig
+    gdb
+    gdk-pixbuf
+    glxinfo
+    gtest
+    gtk3
+    libGL
+    libxkbcommon
+    mesa
+    openssl
+    pango
+    udev
+    vulkan-tools
+    wayland
+    xorg.libX11
+    xorg.libXcursor
+    xorg.libXi
+    xorg.libXrandr
+    xorg.libXxf86vm
+  ]);
 in
 pkgs.mkShell {
   # Binaries to build with
@@ -34,46 +59,14 @@ pkgs.mkShell {
     xz
   ]);
 
-  # Libs to build and run with
-  buildInputs = (with pkgs; [
-    alsa-lib.dev
-    atk
-    fontconfig
-    gdb
-    gdk-pixbuf
-    glxinfo
-    gtest
-    gtk3
-    libxkbcommon
-    mesa
-    openssl
-    pango
-    udev
-    vulkan-tools
-    wayland
-    xorg.libX11
-    xorg.libXcursor
-    xorg.libXi
-    xorg.libXrandr
-    xorg.libXxf86vm
-  ]);
+  buildInputs = myBuildInputs;
 
   shellHook = ''
     sccache --stop-server
     sccache --start-server
   '';
 
-  LD_LIBRARY_PATH = (pkgs.lib.concatStrings (builtins.map (a: ''${a}/lib:'') (with pkgs; [
-    libxkbcommon
-    mesa
-    vulkan-loader
-    wayland
-    xorg.libX11
-    xorg.libXcursor
-    xorg.libXi
-    xorg.libXrandr
-    xorg.libXxf86vm
-  ])));
+  LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath myBuildInputs;
 
   RUSTC_WRAPPER = "${pkgs.sccache}/bin/sccache";
   SCCACHE_CACHE_SIZE = "120G";

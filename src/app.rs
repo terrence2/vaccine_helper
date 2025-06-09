@@ -1,22 +1,58 @@
-use crate::schedule::Vaccine;
+use crate::schedule::{Vaccine, VaccineAppointment};
+use egui_dnd::dnd;
+use itertools::Itertools;
+use jiff::Zoned;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-/// We derive Deserialize/Serialize so we can persist app state on shutdown.
-#[derive(serde::Deserialize, serde::Serialize)]
-#[serde(default)] // if we add new fields, give them default values when deserializing old state
+#[derive(Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Deserialize, Serialize)]
+#[serde(default)]
+pub struct VaccineConfig {
+    name: String,
+    enabled: bool,
+}
+
+// Configuration for the scheduling process.
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct Profile {
+    vaccines: Vec<VaccineConfig>,
+    shots_per_visit: u32,
+    schedule: Vec<VaccineAppointment>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(default)]
 pub struct TemplateApp {
-    // Example stuff:
-    label: String,
-
-    #[serde(skip)] // This how you opt-out of serialization of a field
-    value: f32,
+    active_profile: String,
+    profiles: HashMap<String, Profile>,
+    show_profiles: bool,
+    show_about: bool,
 }
 
 impl Default for TemplateApp {
     fn default() -> Self {
+        let mut profiles = HashMap::new();
+        profiles.insert(
+            "Default".to_owned(),
+            Profile {
+                vaccines: Vaccine::get_vaccines()
+                    .keys()
+                    .sorted()
+                    .map(|v| VaccineConfig {
+                        name: v.to_string(),
+                        enabled: true,
+                    })
+                    .collect(),
+                shots_per_visit: 3,
+                schedule: vec![],
+            },
+        );
         Self {
-            // Example stuff:
-            label: "Hello World!".to_owned(),
-            value: 2.7,
+            active_profile: "Default".to_owned(),
+            profiles,
+            show_profiles: false,
+            show_about: false,
         }
     }
 }
@@ -24,6 +60,8 @@ impl Default for TemplateApp {
 impl TemplateApp {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        egui_extras::install_image_loaders(&cc.egui_ctx);
+
         // This is also where you can customize the look and feel of egui using
         // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
 
@@ -56,8 +94,17 @@ impl eframe::App for TemplateApp {
                 let is_web = cfg!(target_arch = "wasm32");
                 if !is_web {
                     ui.menu_button("File", |ui| {
+                        if ui.button("Profiles...").clicked() {
+                            self.show_profiles = true;
+                        }
+                        ui.separator();
                         if ui.button("Quit").clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                    });
+                    ui.menu_button("Help", |ui| {
+                        if ui.button("About...").clicked() {
+                            self.show_about = true;
                         }
                     });
                     ui.add_space(16.0);
@@ -68,35 +115,95 @@ impl eframe::App for TemplateApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            for vaccine in Vaccine::get_vaccines() {
-                ui.label(vaccine.name());
-            }
-            /*
-            // The central panel the region left after adding TopPanel's and SidePanel's
-            ui.heading("eframe template");
+            ui.heading("Schedule Configuration");
+            ui.label("Select and prioritize the vaccines you want to get");
 
+            // Order the vaccines and select which ones to enable.
+            let profile = self.profiles.get_mut(&self.active_profile).unwrap();
+            let response = dnd(ui, "dnd_vaccines").show(
+                profile.vaccines.iter_mut(),
+                |ui, vaccine_cfg, handle, state| {
+                    let vaccine = Vaccine::get_vaccines()
+                        .get(vaccine_cfg.name.as_str())
+                        .expect("valid vaccine name");
+                    handle.ui(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.add(egui::Image::new(egui::include_image!(
+                                "../assets/icons8-drag-handle-30.png"
+                            )));
+                            ui.checkbox(&mut vaccine_cfg.enabled, "");
+                            ui.add_enabled(
+                                vaccine_cfg.enabled,
+                                egui::Label::new(format!(
+                                    "{} [{} & boost {}]",
+                                    vaccine.name(),
+                                    vaccine.dosage_schedule(),
+                                    vaccine.booster_schedule()
+                                )),
+                            );
+                        });
+                    });
+                },
+            );
+            if let Some(update) = response.update {
+                profile.vaccines.swap(update.from, update.to);
+            }
+
+            // Select concurrency
             ui.horizontal(|ui| {
-                ui.label("Write something: ");
-                ui.text_edit_singleline(&mut self.label);
+                let r0 = ui.label("Max Shots per visit:");
+                let r1 = ui.add(egui::Slider::new(&mut profile.shots_per_visit, 1..=10));
+                for resp in [r0, r1].iter() {
+                    if resp.hovered() {
+                        resp.show_tooltip_text("Don't schedule more than this many shots per day.")
+                    }
+                }
             });
-
-            ui.add(egui::Slider::new(&mut self.value, 0.0..=10.0).text("value"));
-            if ui.button("Increment").clicked() {
-                self.value += 1.0;
+            ui.separator();
+            if ui.button("Propose Schedule").clicked() {
+                // TODO: fill out the schedule from our config
+                profile.schedule = Vaccine::schedule(
+                    &Zoned::now(),
+                    profile
+                        .vaccines
+                        .iter()
+                        .filter(|v| v.enabled)
+                        .map(|v| v.name.clone()),
+                    profile.shots_per_visit,
+                    vec![],
+                );
             }
 
-            ui.separator();
-
-            ui.add(egui::github_link_file!(
-                "https://github.com/emilk/eframe_template/blob/main/",
-                "Source code."
-            ));
+            // Show the current schedule
+            let now = Zoned::now();
+            let year = now.year();
+            let month = now.month();
+            for y in year..year + 50 {
+                if profile.schedule.iter().any(|appt| appt.year() == y) {
+                    ui.heading(format!("{}", y));
+                    ui.separator();
+                }
+                for mo in month..month + 12 {
+                    if profile
+                        .schedule
+                        .iter()
+                        .any(|appt| appt.year() == y && appt.month() == mo)
+                    {
+                        let tmp = jiff::civil::date(y, mo, 1);
+                        ui.heading(format!("{}", tmp.strftime("%B")));
+                    }
+                    for appt in &profile.schedule {
+                        if appt.year() == y && appt.month() == mo {
+                            ui.label(appt.vaccine());
+                        }
+                    }
+                }
+            }
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 powered_by_egui_and_eframe(ui);
                 egui::warn_if_debug_build(ui);
             });
-            */
         });
     }
 }

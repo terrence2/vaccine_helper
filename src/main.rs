@@ -18,7 +18,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "eframe template",
+        "Vaccine Helper",
         native_options,
         Box::new(|cc| Ok(Box::new(vaccine_helper::TemplateApp::new(cc)))),
     )
