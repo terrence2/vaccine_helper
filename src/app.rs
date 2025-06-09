@@ -19,6 +19,7 @@ pub struct Profile {
     vaccines: Vec<VaccineConfig>,
     shots_per_visit: u32,
     schedule: Vec<VaccineAppointment>,
+    schedule_base: Zoned,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -46,6 +47,7 @@ impl Default for TemplateApp {
                     .collect(),
                 shots_per_visit: 3,
                 schedule: vec![],
+                schedule_base: Zoned::now(),
             },
         );
         Self {
@@ -160,19 +162,24 @@ impl eframe::App for TemplateApp {
                 }
             });
             ui.separator();
-            if ui.button("Propose Schedule").clicked() {
-                // TODO: fill out the schedule from our config
-                profile.schedule = Vaccine::schedule(
-                    &Zoned::now(),
-                    profile
-                        .vaccines
-                        .iter()
-                        .filter(|v| v.enabled)
-                        .map(|v| v.name.clone()),
-                    profile.shots_per_visit,
-                    vec![],
-                );
-            }
+
+            // Compute the schedule
+            ui.horizontal(|ui| {
+                if ui.button("Propose Schedule").clicked() {
+                    profile.schedule_base = Zoned::now();
+                    profile.schedule = Vaccine::schedule(
+                        &profile.schedule_base,
+                        profile
+                            .vaccines
+                            .iter()
+                            .filter(|v| v.enabled)
+                            .map(|v| v.name.clone()),
+                        profile.shots_per_visit,
+                        vec![],
+                    );
+                }
+                ui.label(format!("Last computed at: {}", profile.schedule_base));
+            });
 
             // Show the current schedule
             let now = Zoned::now();

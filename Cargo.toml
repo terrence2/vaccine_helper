@@ -27,7 +27,7 @@ egui_dnd = "0.12"
 egui_extras = { version = "0.31", features = ["image"] }
 image = { version = "0.25", features = ["jpeg", "png"] }
 itertools = "0.14"
-jiff = { version = "0.2", features = ["std"] }
+jiff = { version = "0.2", features = ["serde", "std"] }
 
 # You only need serde if you want app persistence:
 serde = { version = "1.0.219", features = ["derive"] }
