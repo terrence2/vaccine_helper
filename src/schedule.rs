@@ -1,6 +1,7 @@
 use anyhow::Result;
 use jiff::{SpanRound, Unit, Zoned};
 use serde::{Deserialize, Serialize};
+use std::fmt::{Display, Formatter};
 use std::{cmp::Ordering, collections::HashMap, fmt, sync::OnceLock};
 
 // Record the number of months between doses.
@@ -333,6 +334,7 @@ impl Vaccine {
                 }
                 appointments.push(VaccineAppointment::from_month_offset(
                     vaccine.name(),
+                    RecordKind::from_doses_index(index, vaccine),
                     now,
                     dose_mo,
                 ))
@@ -343,20 +345,97 @@ impl Vaccine {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub enum RecordKind {
     Dose(u8),
+    #[default]
     Booster,
+}
+
+impl Display for RecordKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            RecordKind::Dose(index) => write!(f, "Dose#{}", index + 1),
+            RecordKind::Booster => write!(f, "Booster"),
+        }
+    }
+}
+
+impl RecordKind {
+    pub fn all_kinds() -> &'static [(&'static str, RecordKind)] {
+        static NAMES: OnceLock<&'static [(&'static str, RecordKind)]> = OnceLock::new();
+        NAMES.get_or_init(|| {
+            &[
+                ("Booster", RecordKind::Booster),
+                ("Dose#1", RecordKind::Dose(0)),
+                ("Dose#2", RecordKind::Dose(1)),
+                ("Dose#3", RecordKind::Dose(2)),
+                ("Dose#4", RecordKind::Dose(3)),
+            ]
+        })
+    }
+
+    pub fn from_doses_index(index: usize, vaccine: &Vaccine) -> RecordKind {
+        if index < vaccine.dosage_schedule().all_months().len() {
+            RecordKind::Dose(index.try_into().expect("fewer than u8 doses"))
+        } else {
+            RecordKind::Booster
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct VaccineRecord {
     vaccine: String,
+    date: Zoned,
     kind: RecordKind,
     notes: String,
 }
 
+impl Default for VaccineRecord {
+    fn default() -> Self {
+        Self {
+            vaccine: "Tdap".into(),
+            date: Zoned::now(),
+            kind: RecordKind::Booster,
+            notes: String::new(),
+        }
+    }
+}
+
 impl VaccineRecord {
+    pub fn vaccine(&self) -> &str {
+        &self.vaccine
+    }
+
+    pub fn vaccine_mut(&mut self) -> &mut String {
+        &mut self.vaccine
+    }
+
+    pub fn date(&self) -> &Zoned {
+        &self.date
+    }
+
+    pub fn date_mut(&mut self) -> &mut Zoned {
+        &mut self.date
+    }
+
+    pub fn kind(&self) -> RecordKind {
+        self.kind
+    }
+
+    pub fn kind_mut(&mut self) -> &mut RecordKind {
+        &mut self.kind
+    }
+
+    pub fn notes(&self) -> &str {
+        &self.notes
+    }
+
+    pub fn notes_mut(&mut self) -> &mut String {
+        &mut self.notes
+    }
+
     pub fn have_matching(records: &[VaccineRecord], vaccine_name: &str, index: u8) -> bool {
         records
             .iter()
@@ -367,6 +446,7 @@ impl VaccineRecord {
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct VaccineAppointment {
     vaccine: String,
+    kind: RecordKind,
     year: i16,
     month: i8,
 }
@@ -374,6 +454,10 @@ pub struct VaccineAppointment {
 impl VaccineAppointment {
     pub fn vaccine(&self) -> &str {
         &self.vaccine
+    }
+
+    pub fn kind(&self) -> RecordKind {
+        self.kind
     }
 
     pub fn year(&self) -> i16 {
@@ -384,10 +468,11 @@ impl VaccineAppointment {
         self.month
     }
 
-    fn from_month_offset(vaccine: &str, now: &Zoned, mo: u32) -> Self {
+    fn from_month_offset(vaccine: &str, kind: RecordKind, now: &Zoned, mo: u32) -> Self {
         let (year, month) = Self::mo_to_ym(now, mo);
         VaccineAppointment {
             vaccine: vaccine.to_string(),
+            kind,
             year,
             month,
         }

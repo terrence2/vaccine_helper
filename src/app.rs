@@ -1,7 +1,9 @@
-use crate::schedule::{Vaccine, VaccineAppointment};
+use crate::schedule::{RecordKind, Vaccine, VaccineAppointment, VaccineRecord};
+use chrono::{Datelike, NaiveDate};
+use egui::TextWrapMode;
 use egui_dnd::dnd;
 use itertools::Itertools;
-use jiff::Zoned;
+use jiff::{civil::date as jiffdate, tz::TimeZone, Zoned};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -19,6 +21,7 @@ pub struct Profile {
     vaccines: Vec<VaccineConfig>,
     shots_per_visit: u8,
     end_plan_year: i16,
+    records: Vec<VaccineRecord>,
     schedule: Vec<VaccineAppointment>,
 }
 
@@ -35,6 +38,7 @@ impl Default for Profile {
                 .collect(),
             shots_per_visit: 3,
             end_plan_year: Zoned::now().year() + 55,
+            records: vec![],
             schedule: vec![],
         }
     }
@@ -52,7 +56,7 @@ pub struct VaccineHelperApp {
     show_about: bool,
 
     // Add record widget
-    add_record_vaccine: Option<String>,
+    add_record: Option<VaccineRecord>,
 
     // Add profile widget
     add_profile_name: String,
@@ -68,7 +72,7 @@ impl Default for VaccineHelperApp {
             show_profiles: false,
             show_preferences: false,
             show_about: false,
-            add_record_vaccine: None,
+            add_record: None,
             add_profile_name: "".to_owned(),
         }
     }
@@ -98,16 +102,17 @@ impl eframe::App for VaccineHelperApp {
         // Put your widgets into a `SidePanel`, `TopBottomPanel`, `CentralPanel`, `Window` or `Area`.
         // For inspiration and more examples, go to https://emilk.github.io/egui
 
+        // Menu Bar
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            // The top panel is often a good place for a menu bar:
-
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("Profiles...").clicked() {
                         self.show_profiles = true;
+                        ui.close_menu();
                     }
                     if ui.button("Preferences...").clicked() {
                         self.show_preferences = true;
+                        ui.close_menu();
                     }
 
                     // NOTE: no File->Quit on web pages!
@@ -122,138 +127,201 @@ impl eframe::App for VaccineHelperApp {
                 ui.menu_button("Help", |ui| {
                     if ui.button("About...").clicked() {
                         self.show_about = true;
+                        ui.close_menu();
                     }
                 });
             });
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Vaccine Records");
-            ui.label("Put immunizations you've received here to remove them from the schedule.");
-            ui.label("");
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.heading("Vaccine Records");
+                ui.label(
+                    "Put immunizations you've already received here to remove them from the schedule.",
+                );
+                egui::Grid::new("records_grid").num_columns(5).show(ui, |ui| {
+                    let mut deletions = vec![];
+                    for (i, record) in self.profiles[&self.active_profile].records.iter().enumerate() {
+                        ui.label(record.date().strftime("%d %b %y").to_string());
+                        ui.label(record.vaccine());
+                        ui.label(record.kind().to_string());
+                        ui.label(record.notes());
+                        if ui.button("Delete").clicked() {
+                            deletions.push(i);
+                        }
+                        ui.end_row();
+                    }
+                    for deletion in deletions.iter().rev() {
+                        self.profiles.get_mut(&self.active_profile).unwrap().records.remove(*deletion);
+                    }
+                });
+                if let Some(mut record) = self.add_record.take() {
+                    egui::Grid::new("record_entry_grid").num_columns(2).show(ui, |ui| {
+                        let vaccine_names = Vaccine::get_vaccines().keys().map(|v| v.to_string()).sorted().collect_vec();
+                        let mut current_index = vaccine_names.iter().position(|v| v == record.vaccine()).unwrap_or(0);
+                        ui.label("Vaccine:");
+                        egui::ComboBox::from_id_salt("record_entry_vaccine").wrap_mode(TextWrapMode::Extend).show_index(
+                            ui,
+                            &mut current_index,
+                            vaccine_names.len(),
+                            |i| &vaccine_names[i],
+                        );
+                        *record.vaccine_mut() = vaccine_names[current_index].clone();
+                        ui.end_row();
 
-            ui.heading("Schedule Configuration");
-            ui.label("Select and prioritize the vaccines you want to get");
+                        let kind_names = RecordKind::all_kinds();
+                        let mut current_index = kind_names.iter().position(|(_, k)| k == &record.kind()).unwrap();
+                        ui.label("Kind:");
+                        egui::ComboBox::from_id_salt("record_entry_kind").wrap_mode(TextWrapMode::Extend).show_index(
+                            ui,
+                            &mut current_index,
+                            kind_names.len(),
+                            |i| kind_names[i].0,
+                        );
+                        *record.kind_mut() = kind_names[current_index].1;
+                        ui.end_row();
 
-            // Order the vaccines and select which ones to enable.
-            let profile = self.profiles.get_mut(&self.active_profile).unwrap();
-            let response = dnd(ui, "dnd_vaccines").show(
-                profile.vaccines.iter_mut(),
-                |ui, vaccine_cfg, handle, _state| {
-                    let vaccine = Vaccine::get_vaccines()
-                        .get(vaccine_cfg.name.as_str())
-                        .expect("valid vaccine name");
-                    handle.ui(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.add(egui::Image::new(egui::include_image!(
-                                "../assets/icons8-drag-handle-30.png"
-                            )));
-                            ui.checkbox(&mut vaccine_cfg.enabled, "");
-                            let resp = ui.add_enabled(
-                                vaccine_cfg.enabled,
-                                egui::Label::new(format!(
-                                    "{} ({})",
-                                    vaccine.name(),
-                                    vaccine.treats_str(),
-                                )),
-                            );
-                            if resp.hovered() {
-                                resp.show_tooltip_text(format!(
-                                    "Dose: {}\nBoost: {}\nNotes: {}",
-                                    vaccine.dosage_schedule(),
-                                    vaccine.booster_schedule(),
-                                    vaccine.notes()
-                                ));
-                            }
-                        });
+                        ui.label("Date:");
+                        let mut date = NaiveDate::from_ymd_opt(record.date().year().into(), record.date().month() as u32, record.date().day() as u32).unwrap();
+                        ui.add(egui_extras::DatePickerButton::new(&mut date).show_icon(true));
+                        *record.date_mut() = jiffdate(date.year() as i16, date.month() as i8, date.day() as i8).to_zoned(TimeZone::system()).expect("a valid date");
+                        ui.end_row();
+
+                        ui.label("Notes:");
+                        ui.text_edit_singleline(record.notes_mut());
+                        ui.end_row();
                     });
-                },
-            );
-            if let Some(update) = response.update {
-                profile.vaccines.swap(update.from, update.to);
-            }
-
-            // Select concurrency
-            ui.horizontal(|ui| {
-                let r0 = ui.label("Max Shots per visit:");
-                let r1 = ui.add(egui::Slider::new(&mut profile.shots_per_visit, 1..=10));
-                for resp in [r0, r1].iter() {
-                    if resp.hovered() {
-                        resp.show_tooltip_text("Don't schedule more than this many shots per day.")
+                    if ui.button("Add Record").clicked() {
+                        self.profiles.get_mut(&self.active_profile).unwrap().records.push(record);
+                        self.add_record = None;
+                    } else {
+                        self.add_record = Some(record);
                     }
+                } else if ui.button("New Record").clicked() {
+                    self.add_record = Some(VaccineRecord::default());
                 }
-            });
-            ui.horizontal(|ui| {
-                let year = Zoned::now().year();
-                let r0 = ui.label("End plan year:");
-                let r1 = ui.add(egui::Slider::new(
-                    &mut profile.end_plan_year,
-                    year..=year + 100,
-                ));
-                for resp in [r0, r1].iter() {
-                    if resp.hovered() {
-                        resp.show_tooltip_text("When to stop scheduling vaccines.")
+                ui.label("");
+
+                ui.heading("Schedule Configuration");
+                ui.label("Select and prioritize the vaccines you want to get");
+
+                // Order the vaccines and select which ones to enable.
+                let profile = self.profiles.get_mut(&self.active_profile).unwrap();
+                let response = dnd(ui, "dnd_vaccines").show(
+                    profile.vaccines.iter_mut(),
+                    |ui, vaccine_cfg, handle, _state| {
+                        let vaccine = Vaccine::get_vaccines()
+                            .get(vaccine_cfg.name.as_str())
+                            .expect("valid vaccine name");
+                        handle.ui(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.add(egui::Image::new(egui::include_image!(
+                                    "../assets/icons8-drag-handle-30.png"
+                                )));
+                                ui.checkbox(&mut vaccine_cfg.enabled, "");
+                                let resp = ui.add_enabled(
+                                    vaccine_cfg.enabled,
+                                    egui::Label::new(format!(
+                                        "{} ({})",
+                                        vaccine.name(),
+                                        vaccine.treats_str(),
+                                    )),
+                                );
+                                if resp.hovered() {
+                                    resp.show_tooltip_text(format!(
+                                        "Dose: {}\nBoost: {}\nNotes: {}",
+                                        vaccine.dosage_schedule(),
+                                        vaccine.booster_schedule(),
+                                        vaccine.notes()
+                                    ));
+                                }
+                            });
+                        });
+                    },
+                );
+                if let Some(update) = response.update {
+                    profile.vaccines.swap(update.from, update.to);
+                }
+
+                // Select concurrency
+                ui.horizontal(|ui| {
+                    let r0 = ui.label("Max Shots per visit:");
+                    let r1 = ui.add(egui::Slider::new(&mut profile.shots_per_visit, 1..=10));
+                    for resp in [r0, r1].iter() {
+                        if resp.hovered() {
+                            resp.show_tooltip_text(
+                                "Don't schedule more than this many shots per day.",
+                            )
+                        }
                     }
-                }
-            });
+                });
+                ui.horizontal(|ui| {
+                    let year = Zoned::now().year();
+                    let r0 = ui.label("End plan year:");
+                    let r1 = ui.add(egui::Slider::new(
+                        &mut profile.end_plan_year,
+                        year..=year + 100,
+                    ));
+                    for resp in [r0, r1].iter() {
+                        if resp.hovered() {
+                            resp.show_tooltip_text("When to stop scheduling vaccines.")
+                        }
+                    }
+                });
 
-            ui.separator();
+                ui.separator();
 
-            // Re-compute the schedule
-            // TODO: only do this if something changed? Probably not worth bothering.
-            profile.schedule = Vaccine::schedule(
-                &Zoned::now(),
-                profile
-                    .vaccines
-                    .iter()
-                    .filter(|v| v.enabled)
-                    .map(|v| v.name.clone()),
-                profile.shots_per_visit,
-                profile.end_plan_year,
-                &[],
-            )
-            .unwrap();
-
-            // Show the current schedule
-            let now = Zoned::now();
-            let year = now.year();
-            let month = now.month();
-            for y in year..year + 50 {
-                if profile.schedule.iter().any(|appt| appt.year() == y) {
-                    ui.heading(format!("{}", y));
-                    ui.separator();
-                }
-                for mo in month..month + 12 {
-                    if profile
-                        .schedule
+                // Re-compute the schedule
+                // TODO: only do this if something changed? Probably not worth bothering.
+                profile.schedule = Vaccine::schedule(
+                    &Zoned::now(),
+                    profile
+                        .vaccines
                         .iter()
-                        .any(|appt| appt.year() == y && appt.month() == mo)
-                    {
-                        let tmp = jiff::civil::date(y, mo, 1);
-                        ui.heading(format!("{}", tmp.strftime("%B")));
+                        .filter(|v| v.enabled)
+                        .map(|v| v.name.clone()),
+                    profile.shots_per_visit,
+                    profile.end_plan_year,
+                    &[],
+                )
+                    .unwrap();
+
+                // Show the current schedule
+                let now = Zoned::now();
+                let year = now.year();
+                let month = now.month();
+                for y in year..year + 50 {
+                    if profile.schedule.iter().any(|appt| appt.year() == y) {
+                        ui.heading(egui::RichText::new(format!("{}", y)).underline().strong());
                     }
-                    for appt in &profile.schedule {
-                        if appt.year() == y && appt.month() == mo {
-                            ui.label(format!("    {}", appt.vaccine()));
+                    for mo in month..month + 12 {
+                        if profile
+                            .schedule
+                            .iter()
+                            .any(|appt| appt.year() == y && appt.month() == mo)
+                        {
+                            let tmp = jiff::civil::date(y, mo, 1);
+                            ui.heading(format!("{}", tmp.strftime("%B")));
+                        }
+                        for appt in &profile.schedule {
+                            if appt.year() == y && appt.month() == mo {
+                                ui.label(format!("    {} {}", appt.vaccine(), appt.kind()));
+                            }
                         }
                     }
                 }
-            }
 
-            // Show sub-windows
-            if self.show_profiles {
+                // Show sub-windows
                 self.show_profile_list(ctx);
-            }
-            if self.show_preferences {
                 self.show_preferences(ctx);
-            }
-            if self.show_about {
                 self.show_about(ctx);
-            }
 
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                powered_by_egui_and_eframe(ui);
-                egui::warn_if_debug_build(ui);
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::RIGHT), |ui| {
+                    // ui.with_layout(egui::Layout::left_to_right(egui::Align::RIGHT), |ui| {
+                    powered_by_egui_and_eframe(ui);
+                    // });
+                    egui::warn_if_debug_build(ui);
+                });
             });
         });
     }
@@ -266,57 +334,64 @@ impl eframe::App for VaccineHelperApp {
 
 impl VaccineHelperApp {
     fn show_profile_list(&mut self, ctx: &egui::Context) {
-        egui::Window::new("Profiles").show(ctx, |ui| {
-            let profile_names = self.profiles.keys().cloned().collect_vec();
-            for name in profile_names {
-                let is_active_row = name == self.active_profile;
-                ui.add_enabled_ui(!is_active_row, |ui| {
+        egui::Window::new("Profiles")
+            .open(&mut self.show_profiles)
+            .show(ctx, |ui| {
+                ui.heading("Profile Management");
+                ui.label("Profile data is saved to your machine locally. Deletion is immediate, irreversible, and has no confirmation prompt.");
+                ui.separator();
+                let profile_names = self.profiles.keys().cloned().collect_vec();
+                for name in profile_names {
+                    let is_active_row = name == self.active_profile;
                     ui.horizontal(|ui| {
-                        if ui.button("Activate").clicked() {
-                            self.active_profile = name.clone();
+                        ui.add_enabled_ui(!is_active_row, |ui| {
+                            if ui.button("Activate").clicked() {
+                                self.active_profile = name.clone();
+                            }
+                        });
+                        ui.add_enabled_ui(!is_active_row, |ui| {
+                            if ui.button("Delete").clicked() {
+                                self.profiles.remove(&name);
+                            }
+                        });
+                        let mut content = egui::RichText::new(name);
+                        if is_active_row {
+                            content = content.strong();
                         }
-                        if ui.button("Delete").clicked() {
-                            self.profiles.remove(&name);
-                        }
-                        ui.label(name);
+                        ui.label(content);
                     });
-                });
-            }
-            ui.horizontal(|ui| {
-                ui.label("Add a profile:");
-                ui.text_edit_singleline(&mut self.add_profile_name);
-                if ui.button("Add").clicked() {
-                    self.profiles
-                        .insert(self.add_profile_name.clone(), Profile::default());
-                    self.active_profile = self.add_profile_name.clone();
-                    self.add_profile_name = "".to_owned();
                 }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("Add a profile:");
+                    ui.text_edit_singleline(&mut self.add_profile_name);
+                    if ui.button("Add").clicked() {
+                        self.profiles
+                            .insert(self.add_profile_name.clone(), Profile::default());
+                        self.active_profile = self.add_profile_name.clone();
+                        self.add_profile_name = "".to_owned();
+                    }
+                });
             });
-            ui.separator();
-            if ui.button("Close").clicked() {
-                self.show_profiles = false;
-            }
-        });
     }
 
     fn show_preferences(&mut self, ctx: &egui::Context) {
-        egui::Window::new("Preferences").show(ctx, |ui| {
-            egui::Grid::new("preferences_grid")
-                .num_columns(2)
-                .show(ui, |ui| {
-                    ui.label("Night Mode:");
-                    egui::widgets::global_theme_preference_buttons(ui);
-                    ui.end_row();
-                });
-            ui.separator();
-            if ui.button("Close").clicked() {
-                self.show_preferences = false;
-            }
-        });
+        egui::Window::new("Preferences")
+            .open(&mut self.show_preferences)
+            .show(ctx, |ui| {
+                egui::Grid::new("preferences_grid")
+                    .num_columns(2)
+                    .show(ui, |ui| {
+                        ui.label("Night Mode:");
+                        egui::widgets::global_theme_preference_buttons(ui);
+                        ui.end_row();
+                    });
+            });
     }
 
     fn show_about(&mut self, ctx: &egui::Context) {
         egui::Window::new("About")
+            .open(&mut self.show_about)
             .show(ctx, |ui| {
                 ui.heading("Warning");
                 ui.separator();
@@ -329,6 +404,7 @@ impl VaccineHelperApp {
                 ui.label("");
                 ui.label("The odds of a severe or worse vaccine reaction are, like shark attacks and lightning strikes, low enough that computing accurate odds is impossible. Many vaccines are safe to the limits of our ability to detect, with no reported severe reactions on record.");
                 ui.hyperlink_to("WHO Reaction Rates Info Sheets", "https://www.who.int/teams/regulation-prequalification/regulation-and-safety/pharmacovigilance/guidance/reaction-rates-information-sheets");
+                ui.hyperlink_to("CDC Vaccine Information", "https://www.cdc.gov/vaccines/index.html");
                 ui.label("");
 
                 ui.heading("About this Tool");
@@ -337,24 +413,20 @@ impl VaccineHelperApp {
                 ui.label("");
                 ui.label("The source for this tool is available on GitHub:");
                 ui.hyperlink_to("https://github.com/terrence2/vaccine_helper", "https://github.com/jimmycuadra/vaccine_helper");
-                ui.separator();
-                if ui.button("Close").clicked() {
-                    self.show_about = false;
-                }
             });
     }
 }
 
 fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
+    // Note: right alignment, so add in opposite order.
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        ui.label("Powered by ");
-        ui.hyperlink_to("egui", "https://github.com/emilk/egui");
-        ui.label(" and ");
+        ui.label(".");
         ui.hyperlink_to(
             "eframe",
             "https://github.com/emilk/egui/tree/master/crates/eframe",
         );
-        ui.label(".");
+        ui.label(" and ");
+        ui.hyperlink_to("egui", "https://github.com/emilk/egui");
+        ui.label("Powered by ");
     });
 }

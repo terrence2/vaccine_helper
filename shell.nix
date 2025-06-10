@@ -57,6 +57,7 @@ pkgs.mkShell {
     rust
     sccache
     sqlite
+    trunk
     xz
   ]);
 
