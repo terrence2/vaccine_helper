@@ -1,0 +1,43 @@
+# Purpose
+---
+Vaccine Helper is an application that computes a vaccine schedule and captures vaccine
+records for adults that need help keeping track of their immunizations, especially for
+new vaccines that they didn't get as children, and for boosting vaccines that you don't
+normally get after childhood that really should be boosted.
+
+# Tech Stack
+---
+This application is implemented in the Rust programming language. It is structured as
+an eframe app and uses egui to present a user experience that runs both locally
+and on the web.
+
+# Linting
+---
+Prefer to use clippy for linting.
+
+> cargo clippy
+
+# Testing
+---
+Prefer to use nextest for testing.
+
+> cargo nextest run
+
+# Building
+---
+Building for native is done as standard for Rust projects.
+
+> cargo build
+
+Building for web is done via trunk, running on a custom port to avoid clashing with other apps.
+This will capture the terminal and auto-rebuild on file changes.
+
+> trunk serve -p 8081
+
+# CI/CD
+---
+CI/CD are handled via github actions. Push to a non-main development branch to run the full CI
+suite. Only do this after testing extensively locally, because these runs are quite time consuming.
+
+Once the PR is approved and merged to the main branch, CD will automatically re-test and deploy
+the application to the web.

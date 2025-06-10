@@ -282,7 +282,7 @@ impl eframe::App for VaccineHelperApp {
                         .map(|v| v.name.clone()),
                     profile.shots_per_visit,
                     profile.end_plan_year,
-                    &[],
+                    &profile.records
                 )
                     .unwrap();
 

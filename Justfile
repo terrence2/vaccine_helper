@@ -14,5 +14,5 @@ clean-config:
     rm ~/.local/share/vaccinehelper/app.ron
 
 vibe:
-    nix-shell -p nodejs_23 --command "npm install @anthropic-ai/claude-code"
-    nix-shell -p nodejs_23 --command "./node_modules/.bin/claude"
+    nix-shell -p nodejs_24 --command "npm install @anthropic-ai/claude-code"
+    nix-shell -p nodejs_24 --command "./node_modules/.bin/claude"
