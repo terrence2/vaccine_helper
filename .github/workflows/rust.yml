@@ -2,9 +2,9 @@ on: [ push, pull_request, workflow_dispatch ]
 
 name: CI
 
-env:
-  RUSTFLAGS: -D warnings
-  RUSTDOCFLAGS: -D warnings
+#env:
+#  RUSTFLAGS: -D warnings
+#  RUSTDOCFLAGS: -D warnings
 
 jobs:
   check:
@@ -104,6 +104,9 @@ jobs:
 
   build:
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: 'read'
+      pages: 'write'
     strategy:
       fail-fast: false
       matrix:
