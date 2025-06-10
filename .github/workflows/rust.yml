@@ -105,7 +105,7 @@ jobs:
   build:
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: 'read'
+      contents: 'write'
       pages: 'write'
     strategy:
       fail-fast: false
