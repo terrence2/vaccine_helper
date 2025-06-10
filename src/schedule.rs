@@ -9,19 +9,19 @@ use std::{cmp::Ordering, collections::HashMap, fmt, sync::OnceLock};
 pub enum DoseSchedule {
     Single,
     Repeated {
-        number: u32,
-        interval: u32,
+        number: i16,
+        interval: i16,
     },
     RepeatedRange {
-        number: u32,
-        minimum: u32,
-        maximum: u32,
+        number: i16,
+        minimum: i16,
+        maximum: i16,
     },
 }
 
 impl DoseSchedule {
     // Return the month offsets for all shots
-    fn all_months(&self) -> Vec<u32> {
+    fn all_months(&self) -> Vec<i16> {
         match self {
             Self::Single => vec![0],
             Self::Repeated { number, interval } => (0..*number).map(|i| i * interval).collect(),
@@ -49,13 +49,13 @@ impl fmt::Display for DoseSchedule {
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum BoosterSchedule {
     Annual,
-    Years(u32),
+    Years(i16),
     Lifetime,
 }
 
 impl BoosterSchedule {
     // Return the month offsets for all shots
-    fn all_months(&self, last_dose_mo: u32, limit_mo: u32) -> Vec<u32> {
+    fn all_months(&self, last_dose_mo: i16, limit_mo: i16) -> Vec<i16> {
         let mut out = Vec::new();
         for mo in 1..limit_mo {
             match self {
@@ -74,7 +74,7 @@ impl BoosterSchedule {
         out
     }
 
-    fn duration(&self) -> u32 {
+    fn duration(&self) -> i16 {
         match self {
             Self::Annual => 12,
             Self::Years(n) => 12 * n,
@@ -161,7 +161,7 @@ impl Vaccine {
         self.treats.join(", ")
     }
 
-    pub fn all_doses(&self, end_plan_mo: u32) -> Vec<u32> {
+    pub fn all_doses(&self, end_plan_mo: i16) -> Vec<i16> {
         let mut initial = self.initial_schedule.all_months();
         assert!(!initial.is_empty(), "a vaccine has no schedule");
         let booster = self
@@ -304,7 +304,7 @@ impl Vaccine {
     ) -> Result<Vec<VaccineAppointment>> {
         // Compute mo offset from current to end schedule at.
         let current_year = now.year();
-        let limit_mo = (end_plan_year - current_year) as u32 * 12;
+        let limit_mo = (end_plan_year - current_year) * 12;
 
         // In general, a person can get a whole lot of vaccines in a month, even
         let day_of_mo = now
@@ -313,7 +313,7 @@ impl Vaccine {
             .round(SpanRound::new().smallest(Unit::Day).relative(now))?
             .get_days();
         let days_left_in_month = now.days_in_month() as i32 - day_of_mo;
-        let max_doses_in_mo0 = ((days_left_in_month * nshots as i32) as f32 / 7.).ceil() as u32;
+        let max_doses_in_mo0 = ((days_left_in_month * nshots as i32) as f32 / 7.).ceil() as i16;
         assert!((0..400).contains(&max_doses_in_mo0));
         let mut doses_in_mo0 = 0;
 
@@ -468,7 +468,7 @@ impl VaccineAppointment {
         self.month
     }
 
-    fn from_month_offset(vaccine: &str, kind: RecordKind, now: &Zoned, mo: u32) -> Self {
+    fn from_month_offset(vaccine: &str, kind: RecordKind, now: &Zoned, mo: i16) -> Self {
         let (year, month) = Self::mo_to_ym(now, mo);
         VaccineAppointment {
             vaccine: vaccine.to_string(),
@@ -478,13 +478,13 @@ impl VaccineAppointment {
         }
     }
 
-    fn mo_to_ym(now: &Zoned, mo: u32) -> (i16, i8) {
+    fn mo_to_ym(now: &Zoned, mo: i16) -> (i16, i8) {
         // guaranteed to be in range 1..=12
         let month = now.date().month();
         let year = now.date().year();
         // note: move to 0-based month offsets so we can div and mod easily.
-        let month_offset = month as u32 + mo - 1;
-        let year_offset: i16 = (month_offset / 12).try_into().unwrap();
+        let month_offset = month as i16 + mo - 1;
+        let year_offset = month_offset / 12;
         let month: i8 = ((month_offset % 12) + 1).try_into().unwrap();
         assert!((1..=12).contains(&month));
         (year.saturating_add(year_offset), month)
