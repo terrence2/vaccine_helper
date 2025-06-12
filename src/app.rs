@@ -190,7 +190,9 @@ impl eframe::App for VaccineHelperApp {
                         ui.end_row();
                     });
                     if ui.button("Add Record").clicked() {
+                        // Note: always keep the records sorted by receipt date, not entry time.
                         self.profiles.get_mut(&self.active_profile).unwrap().records.push(record);
+                        self.profiles.get_mut(&self.active_profile).unwrap().records.sort();
                         self.add_record = None;
                     } else {
                         self.add_record = Some(record);
