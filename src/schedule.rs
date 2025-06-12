@@ -145,7 +145,7 @@ impl BoosterSchedule {
             // If the last dose is scheduled in the future, start boosting after that.
             // Note: There *should* be no boosters in our records at this point, but
             //       if they were entered by accident, we don't account for it here and
-            //       just assume that the inital dose scheduling is correct.
+            //       just assume that the initial dose scheduling is correct.
             last_dose_mo + self.duration()
         } else {
             // Otherwise, we need to find the last received dose or booster. This is just the
