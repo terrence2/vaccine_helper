@@ -1,7 +1,6 @@
 use anyhow::Result;
 use jiff::{SpanRound, Unit, Zoned};
 use serde::{Deserialize, Serialize};
-use std::fmt::{Display, Formatter};
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
@@ -100,24 +99,8 @@ impl DoseSchedule {
 
         for (_, mo) in required_doses.iter_mut() {
             *mo = *mo - next_dose_mo + min_dose_offset;
+            assert!(*mo >= 0);
         }
-
-        // for (record, (expect_dose_kind, dose_offset)) in dose_records.zip(self.all_doses()) {
-        //     if record.kind() == expect_dose_kind {}
-        // }
-        // if dose_records.count() >= self.num_doses() as usize {
-        //     return vec![];
-        // }
-
-        // match self {
-        //     Self::Single => vec![0],
-        //     Self::Repeated { number, interval } => {
-        //         (0..*number).map(|i| i as i16 * interval).collect()
-        //     }
-        //     Self::RepeatedRange {
-        //         number, minimum, ..
-        //     } => (0..*number).map(|i| i as i16 * minimum).collect(),
-        // }
 
         Ok(required_doses)
     }
@@ -441,8 +424,8 @@ pub enum DoseKind {
     Booster,
 }
 
-impl Display for DoseKind {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+impl fmt::Display for DoseKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Dose(index) => write!(f, "Dose#{}", index + 1),
             Self::Booster => write!(f, "Booster"),
