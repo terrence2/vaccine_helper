@@ -14,3 +14,9 @@ target_wasm
 
 # Jetbrains
 .idea
+
+# Claude code
+/node_modules/
+/package.json
+/package-lock.json
+

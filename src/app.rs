@@ -1,4 +1,4 @@
-use crate::schedule::{RecordKind, Vaccine, VaccineAppointment, VaccineRecord};
+use crate::schedule::{DoseKind, Vaccine, VaccineAppointment, VaccineRecord};
 use chrono::{Datelike, NaiveDate};
 use egui::TextWrapMode;
 use egui_dnd::dnd;
@@ -19,7 +19,6 @@ pub struct VaccineConfig {
 #[serde(default)]
 pub struct Profile {
     vaccines: Vec<VaccineConfig>,
-    shots_per_visit: u8,
     end_plan_year: i16,
     records: Vec<VaccineRecord>,
     schedule: Vec<VaccineAppointment>,
@@ -36,7 +35,6 @@ impl Default for Profile {
                     enabled: v.recommended(),
                 })
                 .collect(),
-            shots_per_visit: 3,
             end_plan_year: Zoned::now().year() + 55,
             records: vec![],
             schedule: vec![],
@@ -169,8 +167,8 @@ impl eframe::App for VaccineHelperApp {
                         *record.vaccine_mut() = vaccine_names[current_index].clone();
                         ui.end_row();
 
-                        let kind_names = RecordKind::all_kinds();
-                        let mut current_index = kind_names.iter().position(|(_, k)| k == &record.kind()).unwrap();
+                        let kind_names = DoseKind::all_kinds();
+                        let mut current_index = kind_names.iter().position(|(_, k)| k == record.kind()).unwrap();
                         ui.label("Kind:");
                         egui::ComboBox::from_id_salt("record_entry_kind").wrap_mode(TextWrapMode::Extend).show_index(
                             ui,
@@ -243,18 +241,7 @@ impl eframe::App for VaccineHelperApp {
                     profile.vaccines.swap(update.from, update.to);
                 }
 
-                // Select concurrency
-                ui.horizontal(|ui| {
-                    let r0 = ui.label("Max Shots per visit:");
-                    let r1 = ui.add(egui::Slider::new(&mut profile.shots_per_visit, 1..=10));
-                    for resp in [r0, r1].iter() {
-                        if resp.hovered() {
-                            resp.show_tooltip_text(
-                                "Don't schedule more than this many shots per day.",
-                            )
-                        }
-                    }
-                });
+                // Select end plan year
                 ui.horizontal(|ui| {
                     let year = Zoned::now().year();
                     let r0 = ui.label("End plan year:");
@@ -280,9 +267,8 @@ impl eframe::App for VaccineHelperApp {
                         .iter()
                         .filter(|v| v.enabled)
                         .map(|v| v.name.clone()),
-                    profile.shots_per_visit,
                     profile.end_plan_year,
-                    &[],
+                    &profile.records
                 )
                     .unwrap();
 

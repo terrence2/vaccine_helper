@@ -2,33 +2,124 @@ use anyhow::Result;
 use jiff::{SpanRound, Unit, Zoned};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
-use std::{cmp::Ordering, collections::HashMap, fmt, sync::OnceLock};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+    fmt,
+    sync::OnceLock,
+};
 
 // Record the number of months between doses.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum DoseSchedule {
     Single,
     Repeated {
-        number: u32,
-        interval: u32,
+        number: u8,
+        interval: i16,
     },
     RepeatedRange {
-        number: u32,
-        minimum: u32,
-        maximum: u32,
+        number: u8,
+        minimum: i16,
+        maximum: i16,
     },
 }
 
 impl DoseSchedule {
-    // Return the month offsets for all shots
-    fn all_months(&self) -> Vec<u32> {
+    fn all_doses(&self) -> Vec<(DoseKind, i16)> {
         match self {
-            Self::Single => vec![0],
-            Self::Repeated { number, interval } => (0..*number).map(|i| i * interval).collect(),
+            Self::Single => vec![(DoseKind::Dose(0), 0)],
+            Self::Repeated { number, interval } => (0u8..*number)
+                .map(|i| (DoseKind::Dose(i), i as i16 * interval))
+                .collect(),
             Self::RepeatedRange {
                 number, minimum, ..
-            } => (0..*number).map(|i| i * minimum).collect(),
+            } => (0u8..*number)
+                .map(|i| (DoseKind::Dose(i), i as i16 * minimum))
+                .collect(),
         }
+    }
+
+    fn minimum_dose_interval(&self) -> i16 {
+        match self {
+            Self::Single => 0,
+            Self::Repeated { interval, .. } => *interval,
+            Self::RepeatedRange { minimum, .. } => *minimum,
+        }
+    }
+
+    // Return the month offsets for all doses we still need to get
+    fn all_months<'a>(
+        &self,
+        now: &Zoned,
+        dose_records: impl Iterator<Item = &'a &'a VaccineRecord>,
+    ) -> Result<Vec<(DoseKind, i16)>> {
+        let dose_records = dose_records.collect::<Vec<_>>();
+        if dose_records.is_empty() {
+            return Ok(self.all_doses());
+        }
+
+        let dose_record_kinds = dose_records
+            .iter()
+            .map(|record| *record.kind())
+            .collect::<HashSet<_>>();
+
+        // Filter all_doses to remove any doses that are already in the records.
+        let mut required_doses: Vec<(DoseKind, i16)> = self
+            .all_doses()
+            .iter()
+            .filter(|(kind, _)| !dose_record_kinds.contains(kind))
+            .cloned()
+            .collect();
+
+        // We might already have all our doses.
+        if required_doses.is_empty() {
+            return Ok(required_doses);
+        }
+
+        // In the complex case, we need to recompute offsets based on what has been received and when.
+        assert!(!dose_records.is_empty());
+        assert!(!required_doses.is_empty());
+
+        // Get the offset from now to the first does we need. We will need to move all doses forward by this amount.
+        let next_dose_mo = required_doses[0].1;
+
+        // Find the offset from our last dose to now. We may need to push doses forward, if the recommended interval
+        // has not yet been reached for subsequent doses.
+        let last_dose_to_now = &dose_records[0].date - now;
+        let last_dose_mo: i16 = last_dose_to_now
+            .round(SpanRound::new().smallest(Unit::Month).relative(now))?
+            .get_months()
+            .try_into()?;
+        assert!(last_dose_mo <= 0);
+        let min_interval = self.minimum_dose_interval();
+        let min_dose_offset = if -last_dose_mo > min_interval {
+            0
+        } else {
+            min_interval + last_dose_mo
+        };
+
+        for (_, mo) in required_doses.iter_mut() {
+            *mo = *mo - next_dose_mo + min_dose_offset;
+        }
+
+        // for (record, (expect_dose_kind, dose_offset)) in dose_records.zip(self.all_doses()) {
+        //     if record.kind() == expect_dose_kind {}
+        // }
+        // if dose_records.count() >= self.num_doses() as usize {
+        //     return vec![];
+        // }
+
+        // match self {
+        //     Self::Single => vec![0],
+        //     Self::Repeated { number, interval } => {
+        //         (0..*number).map(|i| i as i16 * interval).collect()
+        //     }
+        //     Self::RepeatedRange {
+        //         number, minimum, ..
+        //     } => (0..*number).map(|i| i as i16 * minimum).collect(),
+        // }
+
+        Ok(required_doses)
     }
 }
 
@@ -49,24 +140,24 @@ impl fmt::Display for DoseSchedule {
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum BoosterSchedule {
     Annual,
-    Years(u32),
+    Years(i16),
     Lifetime,
 }
 
 impl BoosterSchedule {
     // Return the month offsets for all shots
-    fn all_months(&self, last_dose_mo: u32, limit_mo: u32) -> Vec<u32> {
+    fn all_months(&self, last_dose_mo: i16, limit_mo: i16) -> Vec<(DoseKind, i16)> {
         let mut out = Vec::new();
         for mo in 1..limit_mo {
             match self {
                 Self::Annual if mo % 12 == 0 => {
-                    out.push(last_dose_mo + mo);
+                    out.push((DoseKind::Booster, last_dose_mo + mo));
                 }
                 Self::Years(n) if mo % (12 * n) == 0 => {
-                    out.push(last_dose_mo + mo);
+                    out.push((DoseKind::Booster, last_dose_mo + mo));
                 }
                 Self::Lifetime if mo % (12 * 25) == 0 => {
-                    out.push(last_dose_mo + mo);
+                    out.push((DoseKind::Booster, last_dose_mo + mo));
                 }
                 _ => {}
             }
@@ -74,7 +165,7 @@ impl BoosterSchedule {
         out
     }
 
-    fn duration(&self) -> u32 {
+    fn duration(&self) -> i16 {
         match self {
             Self::Annual => 12,
             Self::Years(n) => 12 * n,
@@ -161,14 +252,33 @@ impl Vaccine {
         self.treats.join(", ")
     }
 
-    pub fn all_doses(&self, end_plan_mo: u32) -> Vec<u32> {
-        let mut initial = self.initial_schedule.all_months();
-        assert!(!initial.is_empty(), "a vaccine has no schedule");
+    // Return all doses that are needed, starting at `now` and taking into account the vaccine
+    // history in records. All records are for the current vaccine, but may contain both doses
+    // and boosters. When a Dose has been taken in the past, the next dose should be scheduled
+    // at the time when it is due, if in the future, or as soon as possible if it is past due,
+    // but preserving offsets between subsequent doses after.
+    pub fn all_doses<'a>(
+        &self,
+        now: &Zoned,
+        records: impl Iterator<Item = &'a VaccineRecord>,
+        end_plan_mo: i16,
+    ) -> Result<Vec<(DoseKind, i16)>> {
+        let vaccine_records: Vec<&VaccineRecord> = records.collect();
+        let dose_records = vaccine_records
+            .iter()
+            .filter(|record| matches!(record.kind(), DoseKind::Dose(_)));
+
+        // TODO: booster scheduling
+        let _booster_records = vaccine_records
+            .iter()
+            .filter(|record| matches!(record.kind(), DoseKind::Booster));
+
+        let mut initial = self.initial_schedule.all_months(now, dose_records)?;
         let booster = self
             .booster_schedule
-            .all_months(*initial.last().unwrap_or(&0), end_plan_mo);
+            .all_months(initial.last().map(|v| v.1).unwrap_or(0), end_plan_mo);
         initial.extend(booster);
-        initial
+        Ok(initial)
     }
 
     pub fn get_vaccines() -> &'static HashMap<&'static str, Vaccine> {
@@ -298,43 +408,22 @@ impl Vaccine {
     pub fn schedule(
         now: &Zoned,
         prio: impl Iterator<Item = String>,
-        nshots: u8,
         end_plan_year: i16,
         records: &[VaccineRecord],
     ) -> Result<Vec<VaccineAppointment>> {
         // Compute mo offset from current to end schedule at.
         let current_year = now.year();
-        let limit_mo = (end_plan_year - current_year) as u32 * 12;
-
-        // In general, a person can get a whole lot of vaccines in a month, even
-        let day_of_mo = now
-            .first_of_month()?
-            .until(now)?
-            .round(SpanRound::new().smallest(Unit::Day).relative(now))?
-            .get_days();
-        let days_left_in_month = now.days_in_month() as i32 - day_of_mo;
-        let max_doses_in_mo0 = ((days_left_in_month * nshots as i32) as f32 / 7.).ceil() as u32;
-        assert!((0..400).contains(&max_doses_in_mo0));
-        let mut doses_in_mo0 = 0;
+        let limit_mo = (end_plan_year - current_year) * 12;
 
         let vaccines = Vaccine::get_vaccines();
         let mut appointments = Vec::new();
         for vaccine_name in prio {
             let vaccine = vaccines.get(vaccine_name.as_str()).unwrap();
-            for (index, mut dose_mo) in vaccine.all_doses(limit_mo).into_iter().enumerate() {
-                // Skip any innoculations we've already received
-                if VaccineRecord::have_matching(records, &vaccine_name, index.try_into()?) {
-                    continue;
-                }
-
-                if doses_in_mo0 >= max_doses_in_mo0 {
-                    dose_mo += 1;
-                } else if dose_mo == 0 {
-                    doses_in_mo0 += 1;
-                }
+            let vaccine_records = records.iter().filter(|r| r.vaccine() == vaccine.name);
+            for (kind, dose_mo) in vaccine.all_doses(now, vaccine_records, limit_mo)? {
                 appointments.push(VaccineAppointment::from_month_offset(
                     vaccine.name(),
-                    RecordKind::from_doses_index(index, vaccine),
+                    kind,
                     now,
                     dose_mo,
                 ))
@@ -345,42 +434,50 @@ impl Vaccine {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
-pub enum RecordKind {
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Deserialize, Serialize)]
+pub enum DoseKind {
     Dose(u8),
     #[default]
     Booster,
 }
 
-impl Display for RecordKind {
+impl Display for DoseKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            RecordKind::Dose(index) => write!(f, "Dose#{}", index + 1),
-            RecordKind::Booster => write!(f, "Booster"),
+            Self::Dose(index) => write!(f, "Dose#{}", index + 1),
+            Self::Booster => write!(f, "Booster"),
         }
     }
 }
 
-impl RecordKind {
-    pub fn all_kinds() -> &'static [(&'static str, RecordKind)] {
-        static NAMES: OnceLock<&'static [(&'static str, RecordKind)]> = OnceLock::new();
+impl Ord for DoseKind {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (Self::Dose(a), Self::Dose(b)) => a.cmp(b),
+            (Self::Dose(_), Self::Booster) => Ordering::Less,
+            (Self::Booster, Self::Dose(_)) => Ordering::Greater,
+            (Self::Booster, Self::Booster) => Ordering::Equal,
+        }
+    }
+}
+impl PartialOrd for DoseKind {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl DoseKind {
+    pub fn all_kinds() -> &'static [(&'static str, DoseKind)] {
+        static NAMES: OnceLock<&'static [(&'static str, DoseKind)]> = OnceLock::new();
         NAMES.get_or_init(|| {
             &[
-                ("Booster", RecordKind::Booster),
-                ("Dose#1", RecordKind::Dose(0)),
-                ("Dose#2", RecordKind::Dose(1)),
-                ("Dose#3", RecordKind::Dose(2)),
-                ("Dose#4", RecordKind::Dose(3)),
+                ("Booster", Self::Booster),
+                ("Dose#1", Self::Dose(0)),
+                ("Dose#2", Self::Dose(1)),
+                ("Dose#3", Self::Dose(2)),
+                ("Dose#4", Self::Dose(3)),
             ]
         })
-    }
-
-    pub fn from_doses_index(index: usize, vaccine: &Vaccine) -> RecordKind {
-        if index < vaccine.dosage_schedule().all_months().len() {
-            RecordKind::Dose(index.try_into().expect("fewer than u8 doses"))
-        } else {
-            RecordKind::Booster
-        }
     }
 }
 
@@ -388,7 +485,7 @@ impl RecordKind {
 pub struct VaccineRecord {
     vaccine: String,
     date: Zoned,
-    kind: RecordKind,
+    kind: DoseKind,
     notes: String,
 }
 
@@ -397,7 +494,7 @@ impl Default for VaccineRecord {
         Self {
             vaccine: "Tdap".into(),
             date: Zoned::now(),
-            kind: RecordKind::Booster,
+            kind: DoseKind::Booster,
             notes: String::new(),
         }
     }
@@ -420,11 +517,11 @@ impl VaccineRecord {
         &mut self.date
     }
 
-    pub fn kind(&self) -> RecordKind {
-        self.kind
+    pub fn kind(&self) -> &DoseKind {
+        &self.kind
     }
 
-    pub fn kind_mut(&mut self) -> &mut RecordKind {
+    pub fn kind_mut(&mut self) -> &mut DoseKind {
         &mut self.kind
     }
 
@@ -436,17 +533,17 @@ impl VaccineRecord {
         &mut self.notes
     }
 
-    pub fn have_matching(records: &[VaccineRecord], vaccine_name: &str, index: u8) -> bool {
-        records
-            .iter()
-            .any(|record| record.vaccine == vaccine_name && record.kind == RecordKind::Dose(index))
-    }
+    // pub fn have_matching(records: &[VaccineRecord], vaccine_name: &str, index: u8) -> bool {
+    //     records
+    //         .iter()
+    //         .any(|record| record.vaccine == vaccine_name && record.kind == DoseKind::Dose(index))
+    // }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct VaccineAppointment {
     vaccine: String,
-    kind: RecordKind,
+    kind: DoseKind,
     year: i16,
     month: i8,
 }
@@ -456,7 +553,7 @@ impl VaccineAppointment {
         &self.vaccine
     }
 
-    pub fn kind(&self) -> RecordKind {
+    pub fn kind(&self) -> DoseKind {
         self.kind
     }
 
@@ -468,7 +565,7 @@ impl VaccineAppointment {
         self.month
     }
 
-    fn from_month_offset(vaccine: &str, kind: RecordKind, now: &Zoned, mo: u32) -> Self {
+    fn from_month_offset(vaccine: &str, kind: DoseKind, now: &Zoned, mo: i16) -> Self {
         let (year, month) = Self::mo_to_ym(now, mo);
         VaccineAppointment {
             vaccine: vaccine.to_string(),
@@ -478,13 +575,13 @@ impl VaccineAppointment {
         }
     }
 
-    fn mo_to_ym(now: &Zoned, mo: u32) -> (i16, i8) {
+    fn mo_to_ym(now: &Zoned, mo: i16) -> (i16, i8) {
         // guaranteed to be in range 1..=12
         let month = now.date().month();
         let year = now.date().year();
         // note: move to 0-based month offsets so we can div and mod easily.
-        let month_offset = month as u32 + mo - 1;
-        let year_offset: i16 = (month_offset / 12).try_into().unwrap();
+        let month_offset = month as i16 + mo - 1;
+        let year_offset = month_offset / 12;
         let month: i8 = ((month_offset % 12) + 1).try_into().unwrap();
         assert!((1..=12).contains(&month));
         (year.saturating_add(year_offset), month)
@@ -509,8 +606,12 @@ impl PartialOrd for VaccineAppointment {
 mod tests {
     use super::*;
     use anyhow::Result;
-    use jiff::civil::Date;
-    use jiff::tz::TimeZone;
+    use jiff::{
+        civil::{date, Date},
+        tz::TimeZone,
+        Span,
+    };
+    use std::ops::Sub;
 
     fn test_time() -> Result<Zoned> {
         Ok(Date::new(2025, 6, 1)?.to_zoned(TimeZone::get("America/Los_Angeles")?)?)
@@ -530,31 +631,81 @@ mod tests {
     }
 
     #[test]
-    fn test_mo_for_vaccine() -> Result<()> {
+    fn test_dosing_schedule_basic() -> Result<()> {
         assert_eq!(
-            vec![0, 6, 12],
+            vec![
+                (DoseKind::Dose(0), 0i16),
+                (DoseKind::Dose(1), 6),
+                (DoseKind::Dose(2), 12)
+            ],
             Vaccine::get_vaccines()
                 .get("Tdap")
                 .unwrap()
                 .dosage_schedule()
-                .all_months()
+                .all_months(&test_time()?, [].iter())?
         );
         assert_eq!(
-            vec![0, 1],
+            vec![(DoseKind::Dose(0), 0i16), (DoseKind::Dose(1), 1)],
             Vaccine::get_vaccines()
                 .get("Mpox")
                 .unwrap()
                 .dosage_schedule()
-                .all_months()
+                .all_months(&test_time()?, [].iter())?
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_dosing_schedule_with_records() -> Result<()> {
+        // Last dose long enough ago that we don't need to offset to meet minimum intervals
         assert_eq!(
-            vec![60],
+            vec![(DoseKind::Dose(1), 0), (DoseKind::Dose(2), 6)],
             Vaccine::get_vaccines()
-                .get("Mpox")
+                .get("Tdap")
                 .unwrap()
-                .booster_schedule()
-                .all_months(0, 5 * 12 + 1)
+                .dosage_schedule()
+                .all_months(
+                    &test_time()?,
+                    [&&VaccineRecord {
+                        vaccine: "Tdap".to_string(),
+                        date: test_time()?.sub(Span::new().months(7)),
+                        kind: DoseKind::Dose(0),
+                        notes: "".to_string(),
+                    }]
+                    .into_iter()
+                )?
         );
+        // Last dose close enough that we need to offset some to meet minimum intervals
+        assert_eq!(
+            vec![(DoseKind::Dose(1), 1), (DoseKind::Dose(2), 7)],
+            Vaccine::get_vaccines()
+                .get("Tdap")
+                .unwrap()
+                .dosage_schedule()
+                .all_months(
+                    &test_time()?,
+                    [&&VaccineRecord {
+                        vaccine: "Tdap".to_string(),
+                        date: test_time()?.sub(Span::new().months(5)),
+                        kind: DoseKind::Dose(0),
+                        notes: "".to_string(),
+                    }]
+                    .into_iter()
+                )?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_booster_months() -> Result<()> {
+        // assert_eq!(
+        //     vec![60],
+        //     Vaccine::get_vaccines()
+        //         .get("Mpox")
+        //         .unwrap()
+        //         .booster_schedule()
+        //         .all_months(0, 5 * 12 + 1)
+        // );
         Ok(())
     }
 }
