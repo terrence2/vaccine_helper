@@ -1,8 +1,7 @@
-# (Adult) Vaccine Helper
+# Vaccine Helper
 ---
-Vaccine helper is there to give adults (with no a competent vaccine clinic in their area) a simple
-way to track and schedule immunizations with all the incredible new vaccines that are available
-since we were children.
+Vaccine helper is there to give people without a better option a simple way to track and schedule
+immunizations with all the incredible new vaccines that are available since many were children.
 
 The source for this tool is available on [GitHub](https://github.com/jimmycuadra/vaccine_helper).
 [![dependency status](https://deps.rs/repo/github/terrence2/vaccine_helper/status.svg)](https://deps.rs/repo/github/terrence2/vaccine_helper)
