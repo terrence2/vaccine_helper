@@ -161,6 +161,14 @@ impl eframe::App for VaccineHelperApp {
 }
 
 impl VaccineHelperApp {
+    fn profile(&self) -> &Profile {
+        &self.profiles[&self.active_profile]
+    }
+
+    fn profile_mut(&mut self) -> &mut Profile {
+        self.profiles.get_mut(&self.active_profile).unwrap()
+    }
+
     fn show_records_section(&mut self, ui: &mut egui::Ui) -> Result<()> {
         static RESTORE_CONTENT: Mutex<Option<String>> = Mutex::new(None);
         {
@@ -180,11 +188,7 @@ impl VaccineHelperApp {
             .num_columns(5)
             .show(ui, |ui| {
                 let mut deletions = vec![];
-                for (i, record) in self.profiles[&self.active_profile]
-                    .records
-                    .iter()
-                    .enumerate()
-                {
+                for (i, record) in self.profile().records.iter().enumerate() {
                     ui.label(record.date().strftime("%d %b %y").to_string());
                     ui.label(record.vaccine());
                     ui.label(record.kind().to_string());
@@ -195,11 +199,7 @@ impl VaccineHelperApp {
                     ui.end_row();
                 }
                 for deletion in deletions.iter().rev() {
-                    self.profiles
-                        .get_mut(&self.active_profile)
-                        .unwrap()
-                        .records
-                        .remove(*deletion);
+                    self.profile_mut().records.remove(*deletion);
                 }
             });
         if let Some(mut record) = self.add_record.take() {
@@ -258,16 +258,8 @@ impl VaccineHelperApp {
                 });
             if ui.button("Add Record").clicked() {
                 // Note: always keep the records sorted by receipt date, not entry time.
-                self.profiles
-                    .get_mut(&self.active_profile)
-                    .unwrap()
-                    .records
-                    .push(record);
-                self.profiles
-                    .get_mut(&self.active_profile)
-                    .unwrap()
-                    .records
-                    .sort();
+                self.profile_mut().records.push(record);
+                self.profile_mut().records.sort();
                 self.add_record = None;
             } else {
                 self.add_record = Some(record);
@@ -302,9 +294,8 @@ impl VaccineHelperApp {
         ui.label("Select and prioritize the vaccines you want to get");
 
         // Order the vaccines and select which ones to enable.
-        let profile = self.profiles.get_mut(&self.active_profile).unwrap();
         let response = dnd(ui, "dnd_vaccines").show(
-            profile.vaccines.iter_mut(),
+            self.profile_mut().vaccines.iter_mut(),
             |ui, vaccine_cfg, handle, _state| {
                 let vaccine = Vaccine::get_vaccines()
                     .get(vaccine_cfg.name.as_str())
@@ -336,7 +327,7 @@ impl VaccineHelperApp {
             },
         );
         if let Some(update) = response.update {
-            profile.vaccines.swap(update.from, update.to);
+            self.profile_mut().vaccines.swap(update.from, update.to);
         }
 
         // Select end plan year
@@ -344,7 +335,7 @@ impl VaccineHelperApp {
             let year = Zoned::now().year();
             let r0 = ui.label("End plan year:");
             let r1 = ui.add(egui::Slider::new(
-                &mut profile.end_plan_year,
+                &mut self.profile_mut().end_plan_year,
                 year..=year + 100,
             ));
             for resp in [r0, r1].iter() {
@@ -358,15 +349,15 @@ impl VaccineHelperApp {
 
         // Re-compute the schedule
         // TODO: only do this if something changed? Probably not worth bothering.
-        profile.schedule = Vaccine::schedule(
+        self.profile_mut().schedule = Vaccine::schedule(
             &Zoned::now(),
-            profile
+            self.profile()
                 .vaccines
                 .iter()
                 .filter(|v| v.enabled)
                 .map(|v| v.name.clone()),
-            profile.end_plan_year,
-            &profile.records,
+            self.profile().end_plan_year,
+            &self.profile().records,
         )?;
         Ok(())
     }
