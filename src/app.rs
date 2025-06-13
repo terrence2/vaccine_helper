@@ -138,117 +138,20 @@ impl eframe::App for VaccineHelperApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 self.show_records_section(ui).unwrap();
-
-                ui.heading("Schedule Configuration");
-                ui.label("Select and prioritize the vaccines you want to get");
-
-                // Order the vaccines and select which ones to enable.
-                let profile = self.profiles.get_mut(&self.active_profile).unwrap();
-                let response = dnd(ui, "dnd_vaccines").show(
-                    profile.vaccines.iter_mut(),
-                    |ui, vaccine_cfg, handle, _state| {
-                        let vaccine = Vaccine::get_vaccines()
-                            .get(vaccine_cfg.name.as_str())
-                            .expect("valid vaccine name");
-                        handle.ui(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.add(egui::Image::new(egui::include_image!(
-                                    "../assets/icons8-drag-handle-30.png"
-                                )));
-                                ui.checkbox(&mut vaccine_cfg.enabled, "");
-                                let resp = ui.add_enabled(
-                                    vaccine_cfg.enabled,
-                                    egui::Label::new(format!(
-                                        "{} ({})",
-                                        vaccine.name(),
-                                        vaccine.treats_str(),
-                                    )),
-                                );
-                                if resp.hovered() {
-                                    resp.show_tooltip_text(format!(
-                                        "Dose: {}\nBoost: {}\nNotes: {}",
-                                        vaccine.dosage_schedule(),
-                                        vaccine.booster_schedule(),
-                                        vaccine.notes()
-                                    ));
-                                }
-                            });
-                        });
-                    },
-                );
-                if let Some(update) = response.update {
-                    profile.vaccines.swap(update.from, update.to);
-                }
-
-                // Select end plan year
-                ui.horizontal(|ui| {
-                    let year = Zoned::now().year();
-                    let r0 = ui.label("End plan year:");
-                    let r1 = ui.add(egui::Slider::new(
-                        &mut profile.end_plan_year,
-                        year..=year + 100,
-                    ));
-                    for resp in [r0, r1].iter() {
-                        if resp.hovered() {
-                            resp.show_tooltip_text("When to stop scheduling vaccines.")
-                        }
-                    }
-                });
-
-                ui.separator();
-
-                // Re-compute the schedule
-                // TODO: only do this if something changed? Probably not worth bothering.
-                profile.schedule = Vaccine::schedule(
-                    &Zoned::now(),
-                    profile
-                        .vaccines
-                        .iter()
-                        .filter(|v| v.enabled)
-                        .map(|v| v.name.clone()),
-                    profile.end_plan_year,
-                    &profile.records,
-                )
-                .unwrap();
-
-                // Show the current schedule
-                let now = Zoned::now();
-                let year = now.year();
-                let month = now.month();
-                for y in year..year + 50 {
-                    if profile.schedule.iter().any(|appt| appt.year() == y) {
-                        ui.heading(egui::RichText::new(format!("{}", y)).underline().strong());
-                    }
-                    for mo in month..month + 12 {
-                        if profile
-                            .schedule
-                            .iter()
-                            .any(|appt| appt.year() == y && appt.month() == mo)
-                        {
-                            let tmp = jiff::civil::date(y, mo, 1);
-                            ui.heading(format!("{}", tmp.strftime("%B")));
-                        }
-                        for appt in &profile.schedule {
-                            if appt.year() == y && appt.month() == mo {
-                                ui.label(format!("    {} {}", appt.vaccine(), appt.kind()));
-                            }
-                        }
-                    }
-                }
-
-                // Show sub-windows
-                self.show_profile_list(ctx);
-                self.show_preferences(ctx);
-                self.show_about(ctx);
+                self.show_config_section(ui).unwrap();
+                self.show_schedule_section(ui).unwrap();
 
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::RIGHT), |ui| {
-                    // ui.with_layout(egui::Layout::left_to_right(egui::Align::RIGHT), |ui| {
                     powered_by_egui_and_eframe(ui);
-                    // });
                     egui::warn_if_debug_build(ui);
                 });
             });
         });
+
+        // Show sub-windows
+        self.show_profile_list(ctx);
+        self.show_preferences(ctx);
+        self.show_about(ctx);
     }
 
     /// Called by the frame work to save state before shutdown.
@@ -391,6 +294,109 @@ impl VaccineHelperApp {
         }
         ui.label("");
 
+        Ok(())
+    }
+
+    fn show_config_section(&mut self, ui: &mut egui::Ui) -> Result<()> {
+        ui.heading("Schedule Configuration");
+        ui.label("Select and prioritize the vaccines you want to get");
+
+        // Order the vaccines and select which ones to enable.
+        let profile = self.profiles.get_mut(&self.active_profile).unwrap();
+        let response = dnd(ui, "dnd_vaccines").show(
+            profile.vaccines.iter_mut(),
+            |ui, vaccine_cfg, handle, _state| {
+                let vaccine = Vaccine::get_vaccines()
+                    .get(vaccine_cfg.name.as_str())
+                    .expect("valid vaccine name");
+                handle.ui(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Image::new(egui::include_image!(
+                            "../assets/icons8-drag-handle-30.png"
+                        )));
+                        ui.checkbox(&mut vaccine_cfg.enabled, "");
+                        let resp = ui.add_enabled(
+                            vaccine_cfg.enabled,
+                            egui::Label::new(format!(
+                                "{} ({})",
+                                vaccine.name(),
+                                vaccine.treats_str(),
+                            )),
+                        );
+                        if resp.hovered() {
+                            resp.show_tooltip_text(format!(
+                                "Dose: {}\nBoost: {}\nNotes: {}",
+                                vaccine.dosage_schedule(),
+                                vaccine.booster_schedule(),
+                                vaccine.notes()
+                            ));
+                        }
+                    });
+                });
+            },
+        );
+        if let Some(update) = response.update {
+            profile.vaccines.swap(update.from, update.to);
+        }
+
+        // Select end plan year
+        ui.horizontal(|ui| {
+            let year = Zoned::now().year();
+            let r0 = ui.label("End plan year:");
+            let r1 = ui.add(egui::Slider::new(
+                &mut profile.end_plan_year,
+                year..=year + 100,
+            ));
+            for resp in [r0, r1].iter() {
+                if resp.hovered() {
+                    resp.show_tooltip_text("When to stop scheduling vaccines.")
+                }
+            }
+        });
+
+        ui.separator();
+
+        // Re-compute the schedule
+        // TODO: only do this if something changed? Probably not worth bothering.
+        profile.schedule = Vaccine::schedule(
+            &Zoned::now(),
+            profile
+                .vaccines
+                .iter()
+                .filter(|v| v.enabled)
+                .map(|v| v.name.clone()),
+            profile.end_plan_year,
+            &profile.records,
+        )?;
+        Ok(())
+    }
+
+    fn show_schedule_section(&self, ui: &mut egui::Ui) -> Result<()> {
+        // Show the current schedule
+        let profile = &self.profiles[&self.active_profile];
+        let now = Zoned::now();
+        let year = now.year();
+        let month = now.month();
+        for y in year..profile.end_plan_year {
+            if profile.schedule.iter().any(|appt| appt.year() == y) {
+                ui.heading(egui::RichText::new(format!("{}", y)).underline().strong());
+            }
+            for mo in month..month + 12 {
+                if profile
+                    .schedule
+                    .iter()
+                    .any(|appt| appt.year() == y && appt.month() == mo)
+                {
+                    let tmp = jiff::civil::date(y, mo, 1);
+                    ui.heading(format!("{}", tmp.strftime("%B")));
+                }
+                for appt in &profile.schedule {
+                    if appt.year() == y && appt.month() == mo {
+                        ui.label(format!("    {} {}", appt.vaccine(), appt.kind()));
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
