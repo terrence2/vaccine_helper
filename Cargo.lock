@@ -3352,8 +3352,11 @@ dependencies = [
  "env_logger",
  "itertools",
  "jiff",
+ "js-sys",
  "log",
+ "ron",
  "serde",
+ "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
 ]

@@ -1,11 +1,15 @@
-use crate::schedule::{DoseKind, Vaccine, VaccineAppointment, VaccineRecord};
+use crate::{
+    create_file_picker, download_file,
+    schedule::{DoseKind, Vaccine, VaccineAppointment, VaccineRecord},
+};
+use anyhow::Result;
 use chrono::{Datelike, NaiveDate};
 use egui::TextWrapMode;
 use egui_dnd::dnd;
 use itertools::Itertools;
 use jiff::{civil::date as jiffdate, tz::TimeZone, Zoned};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Mutex};
 
 #[derive(Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Deserialize, Serialize)]
 #[serde(default)]
@@ -133,74 +137,7 @@ impl eframe::App for VaccineHelperApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.heading("Vaccine Records");
-                ui.label(
-                    "Put immunizations you've already received here to remove them from the schedule.",
-                );
-                egui::Grid::new("records_grid").num_columns(5).show(ui, |ui| {
-                    let mut deletions = vec![];
-                    for (i, record) in self.profiles[&self.active_profile].records.iter().enumerate() {
-                        ui.label(record.date().strftime("%d %b %y").to_string());
-                        ui.label(record.vaccine());
-                        ui.label(record.kind().to_string());
-                        ui.label(record.notes());
-                        if ui.button("Delete").clicked() {
-                            deletions.push(i);
-                        }
-                        ui.end_row();
-                    }
-                    for deletion in deletions.iter().rev() {
-                        self.profiles.get_mut(&self.active_profile).unwrap().records.remove(*deletion);
-                    }
-                });
-                if let Some(mut record) = self.add_record.take() {
-                    egui::Grid::new("record_entry_grid").num_columns(2).show(ui, |ui| {
-                        let vaccine_names = Vaccine::get_vaccines().keys().map(|v| v.to_string()).sorted().collect_vec();
-                        let mut current_index = vaccine_names.iter().position(|v| v == record.vaccine()).unwrap_or(0);
-                        ui.label("Vaccine:");
-                        egui::ComboBox::from_id_salt("record_entry_vaccine").wrap_mode(TextWrapMode::Extend).show_index(
-                            ui,
-                            &mut current_index,
-                            vaccine_names.len(),
-                            |i| &vaccine_names[i],
-                        );
-                        *record.vaccine_mut() = vaccine_names[current_index].clone();
-                        ui.end_row();
-
-                        let kind_names = DoseKind::all_kinds();
-                        let mut current_index = kind_names.iter().position(|(_, k)| k == record.kind()).unwrap();
-                        ui.label("Kind:");
-                        egui::ComboBox::from_id_salt("record_entry_kind").wrap_mode(TextWrapMode::Extend).show_index(
-                            ui,
-                            &mut current_index,
-                            kind_names.len(),
-                            |i| kind_names[i].0,
-                        );
-                        *record.kind_mut() = kind_names[current_index].1;
-                        ui.end_row();
-
-                        ui.label("Date:");
-                        let mut date = NaiveDate::from_ymd_opt(record.date().year().into(), record.date().month() as u32, record.date().day() as u32).unwrap();
-                        ui.add(egui_extras::DatePickerButton::new(&mut date).show_icon(true));
-                        *record.date_mut() = jiffdate(date.year() as i16, date.month() as i8, date.day() as i8).to_zoned(TimeZone::system()).expect("a valid date");
-                        ui.end_row();
-
-                        ui.label("Notes:");
-                        ui.text_edit_singleline(record.notes_mut());
-                        ui.end_row();
-                    });
-                    if ui.button("Add Record").clicked() {
-                        // Note: always keep the records sorted by receipt date, not entry time.
-                        self.profiles.get_mut(&self.active_profile).unwrap().records.push(record);
-                        self.profiles.get_mut(&self.active_profile).unwrap().records.sort();
-                        self.add_record = None;
-                    } else {
-                        self.add_record = Some(record);
-                    }
-                } else if ui.button("New Record").clicked() {
-                    self.add_record = Some(VaccineRecord::default());
-                }
-                ui.label("");
+                self.show_records_section(ui).unwrap();
 
                 ui.heading("Schedule Configuration");
                 ui.label("Select and prioritize the vaccines you want to get");
@@ -270,9 +207,9 @@ impl eframe::App for VaccineHelperApp {
                         .filter(|v| v.enabled)
                         .map(|v| v.name.clone()),
                     profile.end_plan_year,
-                    &profile.records
+                    &profile.records,
                 )
-                    .unwrap();
+                .unwrap();
 
                 // Show the current schedule
                 let now = Zoned::now();
@@ -321,6 +258,142 @@ impl eframe::App for VaccineHelperApp {
 }
 
 impl VaccineHelperApp {
+    fn show_records_section(&mut self, ui: &mut egui::Ui) -> Result<()> {
+        static RESTORE_CONTENT: Mutex<Option<String>> = Mutex::new(None);
+        {
+            let mut guard = RESTORE_CONTENT.lock().unwrap();
+            let maybe_restore = guard.take();
+            if let Some(restore) = maybe_restore {
+                let new_self: Self = ron::de::from_str(&restore)?;
+                *self = new_self;
+            }
+        }
+
+        ui.heading("Vaccine Records");
+        ui.label(
+            "Put immunizations you've already received here to remove them from the schedule.",
+        );
+        egui::Grid::new("records_grid")
+            .num_columns(5)
+            .show(ui, |ui| {
+                let mut deletions = vec![];
+                for (i, record) in self.profiles[&self.active_profile]
+                    .records
+                    .iter()
+                    .enumerate()
+                {
+                    ui.label(record.date().strftime("%d %b %y").to_string());
+                    ui.label(record.vaccine());
+                    ui.label(record.kind().to_string());
+                    ui.label(record.notes());
+                    if ui.button("Delete").clicked() {
+                        deletions.push(i);
+                    }
+                    ui.end_row();
+                }
+                for deletion in deletions.iter().rev() {
+                    self.profiles
+                        .get_mut(&self.active_profile)
+                        .unwrap()
+                        .records
+                        .remove(*deletion);
+                }
+            });
+        if let Some(mut record) = self.add_record.take() {
+            egui::Grid::new("record_entry_grid")
+                .num_columns(2)
+                .show(ui, |ui| {
+                    let vaccine_names = Vaccine::get_vaccines()
+                        .keys()
+                        .map(|v| v.to_string())
+                        .sorted()
+                        .collect_vec();
+                    let mut current_index = vaccine_names
+                        .iter()
+                        .position(|v| v == record.vaccine())
+                        .unwrap_or(0);
+                    ui.label("Vaccine:");
+                    egui::ComboBox::from_id_salt("record_entry_vaccine")
+                        .wrap_mode(TextWrapMode::Extend)
+                        .show_index(ui, &mut current_index, vaccine_names.len(), |i| {
+                            &vaccine_names[i]
+                        });
+                    *record.vaccine_mut() = vaccine_names[current_index].clone();
+                    ui.end_row();
+
+                    let kind_names = DoseKind::all_kinds();
+                    let mut current_index = kind_names
+                        .iter()
+                        .position(|(_, k)| k == record.kind())
+                        .unwrap();
+                    ui.label("Kind:");
+                    egui::ComboBox::from_id_salt("record_entry_kind")
+                        .wrap_mode(TextWrapMode::Extend)
+                        .show_index(ui, &mut current_index, kind_names.len(), |i| {
+                            kind_names[i].0
+                        });
+                    *record.kind_mut() = kind_names[current_index].1;
+                    ui.end_row();
+
+                    ui.label("Date:");
+                    let mut date = NaiveDate::from_ymd_opt(
+                        record.date().year().into(),
+                        record.date().month() as u32,
+                        record.date().day() as u32,
+                    )
+                    .unwrap();
+                    ui.add(egui_extras::DatePickerButton::new(&mut date).show_icon(true));
+                    *record.date_mut() =
+                        jiffdate(date.year() as i16, date.month() as i8, date.day() as i8)
+                            .to_zoned(TimeZone::system())
+                            .expect("a valid date");
+                    ui.end_row();
+
+                    ui.label("Notes:");
+                    ui.text_edit_singleline(record.notes_mut());
+                    ui.end_row();
+                });
+            if ui.button("Add Record").clicked() {
+                // Note: always keep the records sorted by receipt date, not entry time.
+                self.profiles
+                    .get_mut(&self.active_profile)
+                    .unwrap()
+                    .records
+                    .push(record);
+                self.profiles
+                    .get_mut(&self.active_profile)
+                    .unwrap()
+                    .records
+                    .sort();
+                self.add_record = None;
+            } else {
+                self.add_record = Some(record);
+            }
+        } else {
+            ui.horizontal(|ui| -> Result<()> {
+                if ui.button("New Record").clicked() {
+                    self.add_record = Some(VaccineRecord::default());
+                }
+                if ui.button("Export").clicked() {
+                    let data = ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
+                        .expect("serialize");
+                    download_file(&data, "vaccine_helper.ron", "application/ron").ok();
+                    return Ok(());
+                }
+                if ui.button("Import").clicked() {
+                    create_file_picker(|content| {
+                        *RESTORE_CONTENT.lock().unwrap() = Some(content);
+                    })?;
+                }
+                Ok(())
+            })
+            .inner?;
+        }
+        ui.label("");
+
+        Ok(())
+    }
+
     fn show_profile_list(&mut self, ctx: &egui::Context) {
         egui::Window::new("Profiles")
             .open(&mut self.show_profiles)
