@@ -27,16 +27,22 @@ eframe = { version = "0.31", default-features = false, features = [
 itertools = "0.14"
 jiff = { version = "0.2", features = ["js", "serde", "std"] }
 log = "0.4.27"
+ron = ">= 0.8.1"
 serde = { version = "1.0.219", features = ["derive"] }
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rfd = "0.15"
 env_logger = "0.11.8"
 
 # web:
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4.50"
-web-sys = "0.3.70"              # to access the DOM (to hide the loading text)
+web-sys = { version = "0.3.70", features = [
+    "Blob", "BlobPropertyBag", "HtmlAnchorElement", "HtmlInputElement", "File", "FileReader",
+    "FileList", "Url"] }
 
 [profile.release]
 opt-level = 2 # fast and small wasm
